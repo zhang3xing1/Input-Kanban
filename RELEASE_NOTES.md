@@ -4,6 +4,21 @@
 
 - No unreleased changes yet.
 
+## v0.0.24
+
+### Highlights
+
+- Reduce noise from runtime attention hints by removing the large run-level warning banner for worker attention hints.
+- Replace the task-row intervention warning text with a compact bubble icon that shows details only on hover or keyboard focus.
+- Keep the `介入 resume` action inside the bubble popover so manual intervention remains available without dominating the task table.
+- Sanitize public release notes to avoid exposing local Windows user profile paths; verification now references temporary Windows release-candidate directories generically.
+
+### Verification
+
+- `node --test test/frontend-tmux-ui.test.js test/attention-hint.test.js` passed locally.
+- `npm run check` passed locally with 126 tests.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` in a temporary Windows release-candidate directory.
+
 ## v0.0.23
 
 ### Highlights
@@ -19,7 +34,7 @@
 - `node --test test/cli-submit.test.js` passed locally.
 - `node --test test/attention-hint.test.js test/frontend-tmux-ui.test.js` passed locally.
 - `npm run check` passed locally with 126 tests.
-- Windows-native validation passed on `zhangxing_win` with `npm run check` in `C:\Users\zhangxing\AppData\Local\Temp\input-kanban-v0023-rc`.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` in a temporary Windows release-candidate directory.
 
 ## v0.0.22
 
@@ -49,7 +64,7 @@
 ### Verification
 
 - `npm run check` passed locally with 125 tests.
-- Windows-native validation passed on `zhangxing_win` with `npm run check` in `C:\Users\zhangxing\AppData\Local\Temp\input-kanban-final-merge`.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` in a temporary Windows release-candidate directory.
 
 ## v0.0.20
 
@@ -63,7 +78,7 @@
 ### Verification
 
 - `npm run check` passed locally.
-- Windows-native validation passed on `zhangxing_win` with `npm run check` in `C:\Users\zhangxing\AppData\Local\Temp\input-kanban-v0020-rc`.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` in a temporary Windows release-candidate directory.
 
 ## v0.0.19
 

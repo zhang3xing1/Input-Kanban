@@ -494,9 +494,12 @@ test('task table has no tmux column or file-viewer tmux panel', () => {
   assert.match(script, /attention-resume-label">介入/);
   assert.match(script, /const command = `codex resume \$\{sessionId\}`/);
   assert.doesNotMatch(script, /codex exec resume/);
-  assert.match(html, /th:nth-child\(8\), td:nth-child\(8\) \{ width: 220px; \}/);
-  assert.match(html, /\.attention-action \{ display: inline-flex;/);
-  assert.match(html, /\.attention-pill \{ max-width: 100%; white-space: normal;/);
+  assert.doesNotMatch(script, /执行中预警:/);
+  assert.match(html, /th:nth-child\(8\), td:nth-child\(8\) \{ width: 94px; \}/);
+  assert.match(html, /\.attention-bubble \{ position: relative; display: inline-flex;/);
+  assert.match(html, /\.attention-bubble:hover \.attention-popover, \.attention-bubble:focus-within \.attention-popover \{ display: flex; \}/);
+  assert.match(script, /aria-label="查看人工介入提示"/);
+  assert.match(script, /role="tooltip"/);
 });
 
 test('file viewer renders role-specific file tabs', () => {
