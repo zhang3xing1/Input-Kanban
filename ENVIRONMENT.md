@@ -14,6 +14,7 @@ CLI options take precedence over environment variables. Environment variables ta
 - `KANBAN_PI_BIN`: Pi Coding Agent CLI executable name or path used for command availability monitoring and the optional headless worker backend. Default: `pi`.
 - `KANBAN_CONFIG_PATH`: Local Input Kanban config path. Default: `~/.input-kanban/config.json`.
 - `KANBAN_RUNNER`: Runner mode. Supported values: `headless`, `tmux`. CLI option: `--runner`. When set, it overrides the local config default runner.
+- `KANBAN_TMUX_BIN`: tmux-compatible executable name or path used by the tmux runner and dependency checks. Default: `tmux`.
 - `KANBAN_WORKER_BACKEND`: Worker execution backend. Supported values: `codex`, `pi`. Default: `codex`. CLI option: `--worker-backend`. `pi` is currently supported for headless workers only; planner and final judge remain Codex-backed.
 - `KANBAN_AUTO_POLL_MS`: Poll interval for the Web server background scheduler. Default: `3000`.
 - `KANBAN_AUTO_MAX_RETRIES`: Maximum automatic retries for recoverable failed/unknown tasks in the scheduler. Default: `1`.
@@ -49,6 +50,7 @@ input-kanban \
 - Without `KANBAN_RUNNER`, the default runner is read from `~/.input-kanban/config.json`; if no config exists, it falls back to `headless`.
 - `input-kanban serve` starts a lightweight background scheduler that uses the same orchestrator auto-advance path as CLI `submit --auto` / `input-kanban auto <runId>`. It advances planned runs, serial batches, final judge startup, and bounded automatic retries without relying on an open browser tab. If a run was created with `--plan-approval` / plan approval gate enabled, the scheduler stops after planning until the user confirms the plan.
 - `KANBAN_RUNNER` / `--runner tmux` runs Codex tasks inside tmux windows while keeping scheduling and status tracking in the Node.js orchestrator.
+- tmux script shell selection is automatic: PowerShell/cmd on Windows and bash/sh elsewhere. There is intentionally no user-facing shell selector; if no usable shell backend is found, tmux run creation is blocked.
 - `KANBAN_RUNNER=tmux` is optional. Use it when you want live terminal visibility into planner, worker, and final judge sessions.
 - The Web create form can choose `headless`, `tmux`, or follow the configured default runner for each run.
 - The Web create form can choose the worker backend per run: `Codex exec` or `Pi Coding Agent`. This affects only worker tasks; planner and final judge still use Codex exec.

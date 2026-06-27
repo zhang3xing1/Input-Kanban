@@ -7,12 +7,12 @@ This document explains how Input Kanban is implemented so that humans and coding
 Implementation status:
 
 ```text
-mvp / batch-scheduler / codex-exec-primary / pi-worker-backend / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap / agent-guide / prepare-skill / runner-config / session-management / compact-attention-ui
+mvp / batch-scheduler / codex-exec-primary / pi-worker-backend / tmux-shell-auto-detect / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap / agent-guide / prepare-skill / runner-config / session-management / compact-attention-ui
 ```
 
 Recent validation:
 
-- `npm run check` passes for the CLI entry, backend modules, and test suite. The current v0.0.26 checkout passes with 129 tests locally and on Windows after installing `pi` 0.80.2.
+- `npm run check` passes for the CLI entry, backend modules, and test suite. The current v0.0.27 checkout passes with 137 tests locally and on Windows with `pi` 0.80.2 installed. The Windows validation host did not have tmux/psmux or a supported installer, so tmux shell backend detection and missing-install handling were verified without a real tmux smoke run.
 - A smoke test can start `input-kanban` on a temporary port and read `GET /api/health`.
 - The frontend is a single HTML file; its inline script can be extracted and checked with `node --check` when edited.
 
@@ -38,6 +38,7 @@ The intended use case is:
 - The planner only creates a plan and does not modify the target workspace. Planner failures, invalid output, and empty plans can be safely retried before any worker or judge starts.
 - Local process state, `exit_code`, logs, and artifacts are the source of truth. Codex App Server session lookup is auxiliary.
 - tmux mode changes terminal visibility only. Node.js still owns scheduling, batch barriers, `maxParallel`, stop/archive, `judge_input.json`, and status refresh from `exit_code` plus artifacts.
+- tmux mode auto-detects a script shell backend: PowerShell/cmd on Windows and bash/sh elsewhere. If tmux is installed but no usable shell backend is available, run creation is blocked before scheduling starts.
 - tmux windows stay open after command completion for human inspection, but `exit_code` is written before the keep-open shell starts so state can advance without closing the window.
 - Dashboard tmux attach copy actions are shown only after tmux metadata is present. The file viewer does not repeat tmux terminal details.
 - `codex exec` is treated as non-interactive; tmux mode provides live terminal visibility, not an approval UI.

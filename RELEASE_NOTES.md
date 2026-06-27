@@ -4,6 +4,22 @@
 
 - No unreleased changes yet.
 
+## v0.0.27
+
+### Highlights
+
+- Integrate PR #5's automatic tmux shell backend detection with the existing v0.0.26 pi worker backend.
+- Add native tmux run scripts for POSIX shell, PowerShell, and cmd, selecting PowerShell/cmd automatically on Windows and bash/sh elsewhere.
+- Detect tmux shell availability alongside tmux itself, blocking tmux run creation when tmux is installed but no usable shell backend is available.
+- Record tmux shell and pane metadata in `tmux.json`, including pane selection/attach commands and backend-specific run script paths.
+- Preserve both Web UI preferences: `Worker 后端` and selected runner mode.
+- Keep `pi` worker execution headless-only while tmux tasks remain Codex-backed.
+
+### Verification
+
+- `npm run check` passed locally with 137 tests.
+- Windows-native validation passed on `zhangxing_win` with `pi` 0.80.2 installed; tmux/psmux were absent and no supported installer was available, so validation covered shell backend detection, tmux missing/install failure handling, and `npm run check` with 137 tests in a temporary Windows validation directory.
+
 ## v0.0.26
 
 ### Highlights
