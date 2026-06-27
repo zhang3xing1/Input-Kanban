@@ -13,11 +13,12 @@ import { formatCodexEventsJsonl } from './eventFormatter.js';
 import { createDefaultRunner } from './runners/index.js';
 import { effectiveRunner } from './config.js';
 import { detectTmuxDependency } from './deps.js';
+import { normalizeTmuxShellConfig } from './tmuxShell.js';
 import { isAutoAdvanceableRunStatus, isFailureRunStatus, isTerminalRunStatus } from './status.js';
 import { tmuxHasSession } from './tmux.js';
 
 const execFileAsync = promisify(execFile);
-const runnerCache = new Map(); // Bounded by normalizeRunner/VALID_RUNNERS.
+const runnerCache = new Map(); // Bounded by normalizeRunner/VALID_RUNNERS and tmux shell choices.
 const VALID_SANDBOXES = new Set(['read-only', 'workspace-write', 'danger-full-access']);
 const MISSING_RUNNER_GRACE_MS = 10000;
 const MAX_DERIVED_LABEL_DISPLAY_WIDTH = 40;
@@ -27,11 +28,17 @@ const RUN_STATE_LOCK_TIMEOUT_MS = 30000;
 const LEGACY_DEFAULT_RUNNER = 'headless';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function assertRunnerDependencies(runnerMode, { tmuxDependencyChecker = detectTmuxDependency } = {}) {
+async function assertRunnerDependencies(runnerMode, { tmuxShell = 'auto', tmuxDependencyChecker = detectTmuxDependency } = {}) {
   if (runnerMode !== 'tmux') return;
-  const tmux = await tmuxDependencyChecker();
+  const tmux = await tmuxDependencyChecker({ tmuxShell });
   if (!tmux.installed) {
     const error = new Error('tmux runner requires tmux to be installed');
+    error.statusCode = 400;
+    error.tmux = tmux;
+    throw error;
+  }
+  if (!tmux.shellAvailable) {
+    const error = new Error(`tmux runner requires a usable shell backend: ${tmux.shell?.reason || 'shell backend unavailable'}`);
     error.statusCode = 400;
     error.tmux = tmux;
     throw error;
@@ -49,19 +56,19 @@ function planPath(runDir) { return path.join(runDir, 'plan.json'); }
 function lockPath(runDir) { return path.join(runDir, RUN_STATE_LOCK_NAME); }
 function workspacePathOf(state) { return path.resolve(state?.workspacePath || state?.repo || DEFAULT_WORKSPACE || DEFAULT_REPO); }
 function workspaceNameOf(state) { return state?.workspaceName || path.basename(workspacePathOf(state)) || workspacePathOf(state); }
-function runnerForMode(mode = LEGACY_DEFAULT_RUNNER) {
+function runnerForMode(mode = LEGACY_DEFAULT_RUNNER, { workerBackend = process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex', tmuxShell = 'auto' } = {}) {
   const normalized = normalizeRunner(mode || LEGACY_DEFAULT_RUNNER, 'runner');
-  const workerBackend = normalizeWorkerBackend(process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex', 'KANBAN_WORKER_BACKEND');
-  const cacheKey = `${normalized}:${workerBackend}`;
-  if (!runnerCache.has(cacheKey)) runnerCache.set(cacheKey, createDefaultRunner(normalized, { workerBackend }));
+  const normalizedWorkerBackend = normalizeWorkerBackend(workerBackend, 'KANBAN_WORKER_BACKEND');
+  const normalizedTmuxShell = normalized === 'tmux' ? normalizeTmuxShellConfig(tmuxShell, 'tmuxShell', { fallback: 'auto' }) : '';
+  const cacheKey = `${normalized}:${normalizedWorkerBackend}:${normalizedTmuxShell}`;
+  if (!runnerCache.has(cacheKey)) runnerCache.set(cacheKey, createDefaultRunner(normalized, { workerBackend: normalizedWorkerBackend, tmuxShell: normalizedTmuxShell }));
   return runnerCache.get(cacheKey);
 }
 function runnerForState(state) {
-  const runnerMode = state?.runner || LEGACY_DEFAULT_RUNNER;
-  const workerBackend = normalizeWorkerBackend(state?.workerBackend || process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex', 'KANBAN_WORKER_BACKEND');
-  const cacheKey = `${runnerMode}:${workerBackend}`;
-  if (!runnerCache.has(cacheKey)) runnerCache.set(cacheKey, createDefaultRunner(runnerMode, { workerBackend }));
-  return runnerCache.get(cacheKey);
+  return runnerForMode(state?.runner || LEGACY_DEFAULT_RUNNER, {
+    workerBackend: state?.workerBackend || process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex',
+    tmuxShell: state?.tmuxShell || 'auto'
+  });
 }
 async function resolveRunRunner(requestedRunner) {
   if (process.env.KANBAN_RUNNER) {
@@ -77,6 +84,10 @@ async function resolveRunRunner(requestedRunner) {
     return envRunner;
   }
   return requestedRunner ? normalizeRunner(requestedRunner, 'runner') : await effectiveRunner();
+}
+
+async function resolveRunTmuxShell(requestedTmuxShell) {
+  return requestedTmuxShell ? normalizeTmuxShellConfig(requestedTmuxShell, 'tmuxShell') : 'auto';
 }
 async function detectWorkspaceMetadata(workspacePath) {
   const resolvedWorkspace = path.resolve(workspacePath || DEFAULT_WORKSPACE || DEFAULT_REPO || process.cwd());
@@ -304,14 +315,15 @@ function approvePlanGate(state, approvedBy = 'local-user') {
   return true;
 }
 
-export async function createRun({ label = '', taskText = '', workspace = '', repo = DEFAULT_REPO, maxParallel = 3, workerSandbox = 'workspace-write', workerBackend = 'codex', planApproval = false, requiresPlanApproval = false, codexSkipGitRepoCheck = false, runner: runRunner, tmuxDependencyChecker = detectTmuxDependency } = {}) {
+export async function createRun({ label = '', taskText = '', workspace = '', repo = DEFAULT_REPO, maxParallel = 3, workerSandbox = 'workspace-write', workerBackend = 'codex', planApproval = false, requiresPlanApproval = false, codexSkipGitRepoCheck = false, runner: runRunner, tmuxShell: runTmuxShell, tmuxDependencyChecker = detectTmuxDependency } = {}) {
   const resolvedWorkspace = await assertWorkspacePath(workspace || repo || DEFAULT_WORKSPACE);
   const workspaceMeta = await detectWorkspaceMetadata(resolvedWorkspace);
   const runLabel = deriveRunLabel(label, taskText);
   const runId = makeRunId(runLabel);
   const runDir = pathForRun(runId);
   const selectedRunner = await resolveRunRunner(runRunner);
-  await assertRunnerDependencies(selectedRunner, { tmuxDependencyChecker });
+  const selectedTmuxShell = selectedRunner === 'tmux' ? await resolveRunTmuxShell(runTmuxShell) : 'auto';
+  await assertRunnerDependencies(selectedRunner, { tmuxShell: selectedTmuxShell, tmuxDependencyChecker });
   await ensureDir(runDir);
   await fsp.writeFile(path.join(runDir, 'task.md'), taskText || '');
   const state = {
@@ -332,6 +344,7 @@ export async function createRun({ label = '', taskText = '', workspace = '', rep
     codexSkipGitRepoCheck: !!codexSkipGitRepoCheck,
     gates: { planApproval: normalizePlanApprovalGate(planApproval || requiresPlanApproval) },
     runner: selectedRunner,
+    tmuxShell: selectedTmuxShell,
     status: 'created', createdAt: nowIso(), updatedAt: nowIso(),
     planner: { status: 'pending' }, batches: [], tasks: [], judge: { status: 'pending' }
   };
@@ -662,10 +675,14 @@ function normalizePlan(plan, defaultMaxParallel, defaultSandbox = 'workspace-wri
 
 async function materializePlan(state) {
   const last = path.join(roleDir(pathForRun(state.runId), 'planner'), 'last_message.md');
+  const lastInfo = await fileInfo(last);
   const text = await readTextMaybe(last, 1000000);
   const plan = extractFirstJsonObject(text);
   if (!plan) {
-    state.planner.planParseError = 'planner last_message did not contain a JSON object';
+    const exitCode = state.planner?.exitCode;
+    state.planner.planParseError = !lastInfo.exists && exitCode !== undefined && exitCode !== null && Number(exitCode) !== 0
+      ? `planner process exited with code ${exitCode} before writing last_message.md; inspect stderr.log`
+      : 'planner last_message did not contain a JSON object';
     state.batches = [];
     state.tasks = [];
     return { ok: false, empty: false, error: state.planner.planParseError };
@@ -1190,11 +1207,17 @@ async function attachTmuxMetadata(target, dir) {
     runner: 'tmux',
     ready: true,
     status: raw.status || 'ready',
+    tmuxShell: raw.tmuxShell || null,
     sessionName: raw.sessionName || '',
     windowName: raw.windowName || '',
     target: raw.target || '',
     attachCommand: raw.attachCommand || '',
     selectWindowCommand,
+    paneId: raw.paneId || '',
+    paneTarget: raw.paneTarget || raw.paneId || '',
+    selectPaneCommand: raw.selectPaneCommand || '',
+    paneCommand: raw.paneCommand || raw.selectPaneCommand || selectWindowCommand,
+    attachPaneCommand: raw.attachPaneCommand || '',
     runScript: raw.runScript || '',
     startedAt: raw.startedAt || '',
     readyAt: raw.readyAt || ''
@@ -1235,6 +1258,10 @@ async function aggregateRunTmuxMetadata(state, options = {}) {
 }
 
 async function standardFiles(dir) {
+  const tmuxPath = path.join(dir, 'tmux.json');
+  const tmuxInfo = await fileInfo(tmuxPath);
+  const tmuxMetadata = tmuxInfo.exists ? await readJson(tmuxPath, null) : null;
+  const runScriptPath = tmuxMetadata?.runScript || await firstExistingRunScript(dir);
   return {
     prompt: await fileInfo(path.join(dir, 'prompt.md')),
     events: await fileInfo(path.join(dir, 'events.jsonl')),
@@ -1242,10 +1269,19 @@ async function standardFiles(dir) {
     stderr: await fileInfo(path.join(dir, 'stderr.log')),
     lastMessage: await fileInfo(path.join(dir, 'last_message.md')),
     exitCode: await fileInfo(path.join(dir, 'exit_code')),
-    runScript: await fileInfo(path.join(dir, 'run.sh')),
-    tmux: await fileInfo(path.join(dir, 'tmux.json')),
+    runScript: await fileInfo(runScriptPath),
+    tmux: tmuxInfo,
     manualResult: await fileInfo(path.join(dir, 'manual_result.md'))
   };
+}
+
+async function firstExistingRunScript(dir) {
+  for (const name of ['run.sh', 'run.ps1', 'run.cmd']) {
+    const candidate = path.join(dir, name);
+    const info = await fileInfo(candidate);
+    if (info.exists) return candidate;
+  }
+  return path.join(dir, 'run.sh');
 }
 
 function currentBatch(state) {
@@ -1392,6 +1428,7 @@ async function buildJudgeInput(state) {
       git: state.git || state.workspace?.git || null,
       status: state.status,
       runner: state.runner || LEGACY_DEFAULT_RUNNER,
+      tmuxShell: state.tmuxShell || 'auto',
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
       maxParallel: state.maxParallel,
@@ -1460,14 +1497,14 @@ export function summaryOfRun(s) {
   const tasks = s.tasks || [];
   const workspacePath = s.workspacePath || s.repo || '';
   const git = s.git || s.workspace?.git || null;
-  return { runId: s.runId, label: s.label, repo: s.repo || workspacePath, workspacePath, workspaceName: s.workspaceName || path.basename(workspacePath || ''), git, status: s.status, runner: s.runner || LEGACY_DEFAULT_RUNNER, workerSandbox: s.workerSandbox || 'workspace-write', codexSkipGitRepoCheck: !!s.codexSkipGitRepoCheck, gates: s.gates || {}, archived: !!s.archived, createdAt: s.createdAt, updatedAt: s.updatedAt, durationEnd: runDurationEndOfState(s), total: tasks.length, completed: tasks.filter(t => t.status === 'completed').length, failed: tasks.filter(t => ['failed','unknown'].includes(t.status)).length, running: tasks.filter(t => t.status === 'running').length, batches: (s.batches || []).map(b => ({ id: b.id, name: b.name, status: b.status, total: b.tasks?.length || 0, completed: (b.tasks || []).filter(t => t.status === 'completed').length })) };
+  return { runId: s.runId, label: s.label, repo: s.repo || workspacePath, workspacePath, workspaceName: s.workspaceName || path.basename(workspacePath || ''), git, status: s.status, runner: s.runner || LEGACY_DEFAULT_RUNNER, tmuxShell: s.tmuxShell || 'auto', workerSandbox: s.workerSandbox || 'workspace-write', codexSkipGitRepoCheck: !!s.codexSkipGitRepoCheck, gates: s.gates || {}, archived: !!s.archived, createdAt: s.createdAt, updatedAt: s.updatedAt, durationEnd: runDurationEndOfState(s), total: tasks.length, completed: tasks.filter(t => t.status === 'completed').length, failed: tasks.filter(t => ['failed','unknown'].includes(t.status)).length, running: tasks.filter(t => t.status === 'running').length, batches: (s.batches || []).map(b => ({ id: b.id, name: b.name, status: b.status, total: b.tasks?.length || 0, completed: (b.tasks || []).filter(t => t.status === 'completed').length })) };
 }
 
 export function summaryOfLoadFailedRun(runId, error, raw = {}) {
   const workspacePath = raw?.workspacePath || raw?.repo || '';
   const git = raw?.git || raw?.workspace?.git || null;
   const updatedAt = raw?.updatedAt || raw?.createdAt || null;
-  return { runId, label: raw?.label || runId, repo: raw?.repo || workspacePath, workspacePath, workspaceName: raw?.workspaceName || path.basename(workspacePath || ''), git, status: 'load_failed', runner: raw?.runner || 'unknown', workerSandbox: raw?.workerSandbox || 'workspace-write', codexSkipGitRepoCheck: !!raw?.codexSkipGitRepoCheck, gates: raw?.gates || {}, archived: !!raw?.archived, createdAt: raw?.createdAt || updatedAt, updatedAt, durationEnd: updatedAt, total: 0, completed: 0, failed: 1, running: 0, batches: [], loadError: error?.message || String(error || 'failed to load run') };
+  return { runId, label: raw?.label || runId, repo: raw?.repo || workspacePath, workspacePath, workspaceName: raw?.workspaceName || path.basename(workspacePath || ''), git, status: 'load_failed', runner: raw?.runner || 'unknown', tmuxShell: raw?.tmuxShell || 'auto', workerSandbox: raw?.workerSandbox || 'workspace-write', codexSkipGitRepoCheck: !!raw?.codexSkipGitRepoCheck, gates: raw?.gates || {}, archived: !!raw?.archived, createdAt: raw?.createdAt || updatedAt, updatedAt, durationEnd: updatedAt, total: 0, completed: 0, failed: 1, running: 0, batches: [], loadError: error?.message || String(error || 'failed to load run') };
 }
 
 export async function readRunTaskText(runId) {
@@ -1476,7 +1513,7 @@ export async function readRunTaskText(runId) {
 
 export async function readRunFile(runId, taskId, name) {
   const runDir = pathForRun(runId);
-  const allowed = new Set(['prompt.md','events.jsonl','events_timed.jsonl','events.pretty','stderr.log','last_message.md','exit_code','result.json','evidence.json','verdict.json','judge_input.json','manual_completion.json','manual_result.md','run.sh','tmux.json']);
+  const allowed = new Set(['prompt.md','events.jsonl','events_timed.jsonl','events.pretty','stderr.log','last_message.md','exit_code','result.json','evidence.json','verdict.json','judge_input.json','manual_completion.json','manual_result.md','run.sh','run.ps1','run.cmd','run-cmd-helper.mjs','run-powershell-helper.mjs','tmux.json']);
   if (!allowed.has(name)) throw new Error('file not allowed');
   let dir;
   if (taskId === 'planner') dir = roleDir(runDir, 'planner');

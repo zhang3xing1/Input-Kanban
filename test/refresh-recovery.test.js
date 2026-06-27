@@ -79,6 +79,38 @@ test('refreshRun gives a missing worker runner a grace period before unknown', a
   assert.ok(state.tasks[0].missingRunnerAt);
 });
 
+test('refreshRun reports backend-specific tmux run script files', async () => {
+  const runId = 'run_tmux_powershell_script_file';
+  const runDir = path.join(tmp, runId);
+  const workerDir = path.join(runDir, 'workers', 'T-01');
+  const runScript = path.join(workerDir, 'run.ps1');
+  await fsp.mkdir(workerDir, { recursive: true });
+  await fsp.writeFile(path.join(runDir, 'task.md'), 'tmux script file');
+  await fsp.writeFile(runScript, 'Write-Host run');
+  await writeJson(path.join(workerDir, 'tmux.json'), { runScript, status: 'ready' });
+  const task = { id: 'T-01', batchId: 'batch-1', name: 'task', prompt: 'do task', sandbox: 'read-only', expectedArtifacts: [], status: 'running' };
+  await writeJson(path.join(runDir, 'run_state.json'), {
+    runId,
+    label: 'tmux script file',
+    repo: tmp,
+    maxParallel: 1,
+    runner: 'tmux',
+    status: 'running',
+    createdAt: '2026-06-09T00:00:00.000Z',
+    updatedAt: '2026-06-09T00:00:00.000Z',
+    planner: { status: 'completed' },
+    batches: [{ id: 'batch-1', name: 'batch', maxParallel: 1, status: 'running', tasks: [task] }],
+    tasks: [task],
+    judge: { status: 'pending' }
+  });
+
+  const state = await refreshRun(runId);
+
+  assert.equal(state.tasks[0].files.runScript.exists, true);
+  assert.equal(state.tasks[0].files.runScript.size, 'Write-Host run'.length);
+  assert.equal(state.tasks[0].files.tmux.exists, true);
+});
+
 test('refreshRun marks a missing worker unknown after the grace period', async () => {
   const runId = 'run_missing_worker_after_grace';
   const runDir = path.join(tmp, runId);

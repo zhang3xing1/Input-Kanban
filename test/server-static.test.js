@@ -176,6 +176,15 @@ test('server exposes local config and tmux dependency status', async () => {
     assert.equal(unknownKeyResponse.status, 400);
     assert.match(unknownKey.error, /unsupported config key: runner/);
 
+    const tmuxShellConfigResponse = await fetch(`${baseUrl}/api/config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ defaultTmuxShell: 'powershell' })
+    });
+    const tmuxShellConfig = await tmuxShellConfigResponse.json();
+    assert.equal(tmuxShellConfigResponse.status, 400);
+    assert.match(tmuxShellConfig.error, /unsupported config key: defaultTmuxShell/);
+
     for (const invalidBody of ['null', '[]', '"runner"']) {
       const invalidShapeResponse = await fetch(`${baseUrl}/api/config`, {
         method: 'PATCH',

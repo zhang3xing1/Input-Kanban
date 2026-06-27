@@ -196,6 +196,8 @@ Web 新建任务批次时也可以选择 runner：
 
 默认 runner 会保存到本机配置文件 `~/.input-kanban/config.json`，CLI 和 Web 共用；如果设置了环境变量 `KANBAN_RUNNER`，环境变量优先。
 
+Windows 下 `headless` 仍是默认且不依赖 Git Bash 或 tmux。只有选择 `tmux` runner 时才会检查 tmux 和自动 shell 后端；Windows 会优先使用 PowerShell，不可用时回退到 `cmd`，非 Windows 会使用 `bash`/`sh`。Web、CLI 和环境页不再提供 Git Bash / WSL 等 shell 选项。
+
 如果 Web 里选择 `tmux` 但本机没有检测到 tmux，会禁止创建批次并提示安装命令。Web 不会直接安装系统依赖；需要在终端里显式执行：
 
 ```bash

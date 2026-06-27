@@ -140,9 +140,18 @@ export async function tmuxSplitWindow(sessionName, windowName, options = {}) {
   const args = ['split-window', '-t', `${session}:${window}`];
   if (options.vertical) args.push('-v');
   else args.push('-h');
+  if (options.printPane || options.format) args.push('-P', '-F', options.format || '#{pane_id}');
   if (options.cwd) args.push('-c', options.cwd);
   if (options.command) args.push(options.command);
   return runTmux(args, options);
+}
+
+export async function tmuxSendLine(sessionName, windowName, line, options = {}) {
+  const session = sanitizeTmuxSessionName(sessionName);
+  const window = sanitizeTmuxWindowName(windowName);
+  const target = String(options.target || '').trim() || `${session}:${window}`;
+  await runTmux(['send-keys', '-t', target, '-l', String(line || '')], options);
+  return runTmux(['send-keys', '-t', target, 'C-m'], options);
 }
 
 export async function tmuxSelectLayout(sessionName, windowName, layout = 'tiled', options = {}) {

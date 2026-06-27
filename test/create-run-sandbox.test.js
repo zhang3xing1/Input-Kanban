@@ -10,8 +10,9 @@ const execFileAsync = promisify(execFile);
 const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'input-kanban-create-sandbox-'));
 const repo = path.join(tmp, 'repo');
 const nonGitRepo = path.join(tmp, 'not-git');
-const tmuxInstalled = async () => ({ installed: true, available: true, version: 'tmux 3.4' });
-const tmuxMissing = async () => ({ installed: false, available: false, installAvailable: false });
+const tmuxInstalled = async ({ tmuxShell = 'auto' } = {}) => ({ installed: true, available: true, version: 'tmux 3.4', shellAvailable: true, shell: { requested: tmuxShell, resolved: tmuxShell, available: true } });
+const tmuxMissing = async () => ({ installed: false, available: false, installAvailable: false, shellAvailable: true, shell: { available: true } });
+const tmuxShellMissing = async ({ tmuxShell = 'auto' } = {}) => ({ installed: true, available: true, version: 'tmux 3.4', shellAvailable: false, shell: { requested: tmuxShell, resolved: tmuxShell, available: false, reason: 'backend missing' } });
 await fsp.mkdir(repo, { recursive: true });
 await fsp.mkdir(nonGitRepo, { recursive: true });
 await execFileAsync('git', ['init'], { cwd: repo });
@@ -63,8 +64,24 @@ test('createRun stores an explicit runner for the run', async () => {
   try {
     const state = await createRun({ label: 'tmux runner', repo, taskText: 'noop', runner: 'tmux', tmuxDependencyChecker: tmuxInstalled });
     assert.equal(state.runner, 'tmux');
+    assert.equal(state.tmuxShell, 'auto');
     const persisted = await loadRun(state.runId);
     assert.equal(persisted.runner, 'tmux');
+    assert.equal(persisted.tmuxShell, 'auto');
+  } finally {
+    if (previousRunner === undefined) delete process.env.KANBAN_RUNNER;
+    else process.env.KANBAN_RUNNER = previousRunner;
+  }
+});
+
+test('createRun blocks tmux runner when selected shell backend is unavailable', async () => {
+  const previousRunner = process.env.KANBAN_RUNNER;
+  delete process.env.KANBAN_RUNNER;
+  try {
+    await assert.rejects(
+      () => createRun({ label: 'missing tmux shell', repo, taskText: 'noop', runner: 'tmux', tmuxDependencyChecker: tmuxShellMissing }),
+      error => error.statusCode === 400 && /usable shell backend/.test(error.message) && error.tmux?.shell?.requested === 'auto'
+    );
   } finally {
     if (previousRunner === undefined) delete process.env.KANBAN_RUNNER;
     else process.env.KANBAN_RUNNER = previousRunner;

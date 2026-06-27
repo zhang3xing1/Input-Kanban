@@ -1,6 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { checkTmuxAvailable, DEFAULT_TMUX_BIN } from './tmux.js';
+import { effectiveTmuxShell } from './config.js';
+import { resolveTmuxShellBackend, normalizeTmuxShellConfig } from './tmuxShell.js';
 
 const execFileAsync = promisify(execFile);
 const COMMAND_EXISTS_TIMEOUT_MS = process.platform === 'win32' ? 5000 : 3000;
@@ -80,10 +82,12 @@ function currentTmuxBin(tmuxBin) {
   return tmuxBin || process.env.KANBAN_TMUX_BIN || DEFAULT_TMUX_BIN;
 }
 
-export async function detectTmuxDependency({ tmuxBin } = {}) {
+export async function detectTmuxDependency({ tmuxBin, tmuxShell } = {}) {
   const resolvedTmuxBin = currentTmuxBin(tmuxBin);
   const status = await checkTmuxAvailable({ tmuxBin: resolvedTmuxBin });
   const installPlan = status.available ? null : await tmuxInstallPlan();
+  const requestedTmuxShell = normalizeTmuxShellConfig(tmuxShell || await effectiveTmuxShell(), 'tmuxShell', { fallback: 'auto' });
+  const shell = await resolveTmuxShellBackend(requestedTmuxShell);
   return {
     dependency: 'tmux',
     tmuxBin: resolvedTmuxBin,
@@ -91,6 +95,8 @@ export async function detectTmuxDependency({ tmuxBin } = {}) {
     installed: status.available,
     available: status.available,
     version: status.version,
+    shell,
+    shellAvailable: !!shell.available,
     installPlan,
     installCommand: installPlan?.displayCommand || '',
     installNotes: installPlan?.notes || [],

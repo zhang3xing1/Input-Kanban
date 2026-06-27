@@ -382,8 +382,10 @@ const RUN_LIST_PAGE_SIZE = 10;
 const WORKSPACE_FILTER_ALL = '';
 const WORKER_SANDBOX_STORAGE_KEY = 'input-kanban.workerSandbox';
 const WORKER_BACKEND_STORAGE_KEY = 'input-kanban.workerBackend';
+const RUNNER_MODE_STORAGE_KEY = 'input-kanban.runnerMode';
 const VALID_WORKER_SANDBOXES = new Set(['read-only', 'workspace-write', 'danger-full-access']);
 const VALID_WORKER_BACKENDS = new Set(['codex', 'pi']);
+const VALID_RUNNER_OPTIONS = new Set(['default', 'headless', 'tmux']);
 let currentWorkspacePath = '';
 let selectedWorkspaceFilter = localStorage.getItem('input-kanban.workspaceFilter') || WORKSPACE_FILTER_ALL;
 let appConfigState = { effectiveRunner: 'headless', runnerEnvOverride: false, defaultRunner: 'headless', loaded: false };
@@ -483,7 +485,13 @@ function taskById(id) {
   if (!currentState) return null;
   if (id === 'planner') return currentState.planner;
   if (id === 'judge') return currentState.judge;
-  return (currentState.tasks || []).find(t => t.id === id) || null;
+  const flatTask = (currentState.tasks || []).find(t => t.id === id);
+  if (flatTask) return flatTask;
+  for (const batch of currentState.batches || []) {
+    const task = (batch.tasks || []).find(t => t.id === id);
+    if (task) return task;
+  }
+  return null;
 }
 function tmuxSessionName(state = currentState) {
   return state?.tmux?.tmuxSessionName || state?.tmux?.sessionName || (state?.runId ? `input-kanban-${state.runId}` : '');
@@ -608,14 +616,19 @@ function renderTmuxStatus() {
   const copyButton = document.getElementById('copyTmuxInstallCommandBtn');
   if (!el) return;
   const tmux = tmuxDependencyState;
-  el.classList.toggle('warning', !!tmux && !tmux.installed);
+  el.classList.toggle('warning', !!tmux && (!tmux.installed || !tmux.shellAvailable));
   if (!tmux) {
     el.textContent = '尚未检测';
     copyButton?.classList.add('hidden');
     return;
   }
-  if (tmux.installed) {
+  if (tmux.installed && tmux.shellAvailable) {
     el.textContent = tmux.version || '已安装';
+    copyButton?.classList.add('hidden');
+    return;
+  }
+  if (tmux.installed) {
+    el.textContent = `shell 不可用｜${tmux.shell?.reason || '请检查 PowerShell/cmd'}`;
     copyButton?.classList.add('hidden');
     return;
   }
@@ -685,6 +698,7 @@ function tmuxInstallActionLabel(tmux = tmuxDependencyState) {
 function renderTmuxDependencyModal() {
   const tmux = tmuxDependencyModalState.tmux || tmuxDependencyState;
   const installed = !!tmux?.installed;
+  const shellAvailable = !!tmux?.shellAvailable;
   const guidance = tmuxDependencyModalState.guidance || tmuxInstallGuidance(tmux) || 'input-kanban deps install tmux';
   const actionLabel = tmuxInstallActionLabel(tmux);
   const title = document.getElementById('tmuxDependencyTitle');
@@ -695,13 +709,16 @@ function renderTmuxDependencyModal() {
   const notesEl = document.getElementById('tmuxDependencyNotes');
   const showButton = document.getElementById('showTmuxInstallCommandBtn');
   const copyButton = document.getElementById('copyTmuxDependencyCommandBtn');
-  const notes = installed ? '' : tmuxInstallNotes(tmux).join('\n');
-  if (title) title.textContent = installed ? 'tmux 可用' : 'tmux 未安装';
+  const shellReason = tmux?.shell?.reason || '';
+  const notes = installed ? shellReason : tmuxInstallNotes(tmux).join('\n');
+  if (title) title.textContent = installed && shellAvailable ? 'tmux 可用' : installed ? 'tmux Shell 不可用' : 'tmux 未安装';
   if (message) {
-    message.classList.toggle('warning', !installed);
-    message.textContent = installed
+    message.classList.toggle('warning', !installed || !shellAvailable);
+    message.textContent = installed && shellAvailable
       ? `tmux 可用: ${tmux.version || tmux.tmuxBin || '已安装'}`
-      : `tmux 未安装，不能创建 tmux runner 批次。选择查看${actionLabel}后，在终端中执行对应命令；也可以关闭后改用 headless。`;
+      : installed
+        ? `tmux 已安装，但自动 shell 后端不可用：${shellReason || '请检查 PowerShell/cmd'}。也可以关闭后改用 headless。`
+        : `tmux 未安装，不能创建 tmux runner 批次。选择查看${actionLabel}后，在终端中执行对应命令；也可以关闭后改用 headless。`;
   }
   if (commandLabel) commandLabel.textContent = actionLabel;
   if (command) command.textContent = guidance;
@@ -771,7 +788,7 @@ function showTmuxInstallPrompt(tmux) {
 async function ensureTmuxForCreate() {
   if (selectedRunnerMode() !== 'tmux') return true;
   const tmux = await refreshTmuxStatus();
-  if (tmux?.installed) return true;
+  if (tmux?.installed && tmux?.shellAvailable) return true;
   showTmuxInstallPrompt(tmux);
   return false;
 }
@@ -816,11 +833,26 @@ function initializeWorkerBackendPreference() {
   if (VALID_WORKER_BACKENDS.has(saved)) select.value = saved;
   select.addEventListener('change', saveWorkerBackendPreference);
 }
+function saveRunnerModePreference() {
+  const select = document.getElementById('runnerMode');
+  const value = select?.value || '';
+  if (VALID_RUNNER_OPTIONS.has(value)) localStorage.setItem(RUNNER_MODE_STORAGE_KEY, value);
+}
+function initializeRunnerModePreference() {
+  const select = document.getElementById('runnerMode');
+  if (!select) return;
+  const saved = localStorage.getItem(RUNNER_MODE_STORAGE_KEY);
+  if (VALID_RUNNER_OPTIONS.has(saved)) select.value = saved;
+  select.addEventListener('change', saveRunnerModePreference);
+}
 async function createRun() {
   saveWorkerSandboxPreference();
+  saveWorkerBackendPreference();
+  saveRunnerModePreference();
   if (!await ensureRunnerSelectionReady()) return;
   if (!await ensureTmuxForCreate()) return;
-  const body = { label: label.value, workspace: repo.value, repo: repo.value, maxParallel: maxParallel.value, workerSandbox: workerSandbox.value, workerBackend: workerBackend.value, codexSkipGitRepoCheck: !!document.getElementById('codexSkipGitRepoCheck')?.checked, planApproval: planApproval.checked, taskText: taskText.value, runner: selectedRunnerMode() };
+  const runner = selectedRunnerMode();
+  const body = { label: label.value, workspace: repo.value, repo: repo.value, maxParallel: maxParallel.value, workerSandbox: workerSandbox.value, workerBackend: workerBackend.value, codexSkipGitRepoCheck: !!document.getElementById('codexSkipGitRepoCheck')?.checked, planApproval: planApproval.checked, taskText: taskText.value, runner };
   const r = await api('/api/runs', { method: 'POST', body: JSON.stringify(body) });
   selectedRun = r.runId; selectedTask = null; selectedFileName = null;
   clearFileView();
@@ -1305,9 +1337,9 @@ function taskStatusCell(t) {
   return pill(t?.status);
 }
 function taskActionCell(id, t) {
-  if (!t || id === 'planner' || id === 'judge') return '-';
+  if (!t || id === 'planner' || id === 'judge') return '';
   if (t.manualCompletion) return '<span class="muted">已人工确认</span>';
-  if (!['unknown', 'failed'].includes(t.status)) return '-';
+  if (!['unknown', 'failed'].includes(t.status)) return '';
   const pending = pendingAction === `manual:${id}`;
   return `<button class="danger ${pending ? 'state-pending' : ''}"${pending ? ' disabled' : ''} onclick="markTaskCompleted(event, '${id}')">${pending ? '标记中...' : '手动标记成功'}</button>`;
 }
@@ -1350,7 +1382,8 @@ function taskAttentionHintCell(t) {
   return `<span class="attention-bubble ${severity}"><button class="attention-icon" title="${esc(hintTitle)}" aria-label="查看人工介入提示" onclick="event.stopPropagation()">💬</button><span class="attention-popover" role="tooltip"><span class="attention-popover-message">${esc(t.attentionHint.message)}</span>${detail}${resumeButton}</span></span>`;
 }
 function taskActionInfoCell(id, t) {
-  return `<div class="row-actions">${taskAttentionHintCell(t)}${taskActionCell(id, t)}</div>`;
+  const actions = [taskAttentionHintCell(t), taskActionCell(id, t)].filter(Boolean);
+  return actions.length ? `<div class="row-actions">${actions.join('')}</div>` : '-';
 }
 function taskRow(id, role, t) {
   const thread = t?.codexThread?.id || '';
@@ -1765,6 +1798,7 @@ async function submitManualComplete() {
   });
 }
 
+initializeRunnerModePreference();
 initializeWorkerSandboxPreference();
 initializeWorkerBackendPreference();
 initSessionManagementResize();

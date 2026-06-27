@@ -102,6 +102,14 @@ export async function effectiveRunner() {
   return await configuredDefaultRunner();
 }
 
+export function effectiveTmuxShellSync() {
+  return 'auto';
+}
+
+export async function effectiveTmuxShell() {
+  return 'auto';
+}
+
 async function updateLocalConfigUnlocked(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     const error = new Error('config patch must be a JSON object');

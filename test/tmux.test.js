@@ -16,10 +16,13 @@ import {
   tmuxNewSession,
   tmuxNewWindow,
   tmuxSelectLayout,
+  tmuxSendLine,
   tmuxSplitWindow
 } from '../src/tmux.js';
 import { shellWord } from '../src/deps.js';
 import { createDefaultRunner, createHeadlessRunner, createTmuxRunner, headlessRunner } from '../src/runners/index.js';
+import { buildOverviewCommand, buildRunScript } from '../src/runners/tmuxRunner.js';
+import { tmuxShellLaunchCommand } from '../src/tmuxShell.js';
 
 function makeRunner(handler) {
   const calls = [];
@@ -28,6 +31,14 @@ function makeRunner(handler) {
     return handler(command, args);
   };
   return { calls, runner };
+}
+
+async function finishTmuxHandle(handle, outDir) {
+  const exitCode = await new Promise(resolve => {
+    handle.onExit(resolve);
+    fsp.writeFile(path.join(outDir, 'exit_code'), '0');
+  });
+  assert.equal(exitCode, 0);
 }
 
 test('sanitizes tmux names deterministically with shell-safe characters', () => {
@@ -136,6 +147,89 @@ test('tmux windows can start with commands without send-keys', async () => {
   assert.equal(calls.some(call => call.args.includes('send-keys')), false);
 });
 
+test('tmuxSendLine injects a literal command and enter key', async () => {
+  const { calls, runner } = makeRunner((_command, args) => {
+    if (args[0] === '-V') return { code: 0, stdout: 'tmux 3.4\n' };
+    return { code: 0, stdout: '' };
+  });
+
+  await tmuxSendLine('Run 01', 'Planner', 'pwsh -File "run.ps1"', { runner });
+
+  assert.deepEqual(calls.map(call => call.args), [
+    ['-V'],
+    ['send-keys', '-t', 'Run-01:Planner', '-l', 'pwsh -File "run.ps1"'],
+    ['-V'],
+    ['send-keys', '-t', 'Run-01:Planner', 'C-m']
+  ]);
+});
+
+test('tmux shell helpers launch only native auto-selected scripts', () => {
+  assert.equal(
+    tmuxShellLaunchCommand({ resolved: 'powershell', scriptKind: 'powershell', command: 'powershell' }, 'D:\\UGit\\Input-Kanban\\run.ps1'),
+    'powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "D:\\UGit\\Input-Kanban\\run.ps1"'
+  );
+  assert.equal(
+    tmuxShellLaunchCommand({ resolved: 'cmd', scriptKind: 'cmd', command: 'cmd.exe' }, 'D:\\UGit\\Input-Kanban\\run.cmd'),
+    'cmd.exe /d /s /c ""D:\\UGit\\Input-Kanban\\run.cmd""'
+  );
+  assert.equal(
+    tmuxShellLaunchCommand({ resolved: 'posix', scriptKind: 'bash', command: 'bash' }, '/tmp/input-kanban/run.sh'),
+    '/tmp/input-kanban/run.sh'
+  );
+});
+
+test('tmux overview command follows native shell backends', () => {
+  const windowsStatePath = 'D:\\UGit\\Input-Kanban\\run_state.json';
+  const posixStatePath = '/tmp/input-kanban/run_state.json';
+
+  assert.match(buildOverviewCommand(windowsStatePath, { resolved: 'powershell', scriptKind: 'powershell' }), /Clear-Host; node '.*input-kanban-tmux-overview\.js' 'D:\\UGit\\Input-Kanban\\run_state\.json'; Start-Sleep -Seconds 2/);
+  assert.match(buildOverviewCommand(windowsStatePath, { resolved: 'cmd', scriptKind: 'cmd' }), /cmd\.exe \/d \/s \/c "for \/l %i in \(0,0,1\) do @\(cls & node \^".*input-kanban-tmux-overview\.js\^" \^"D:\\UGit\\Input-Kanban\\run_state\.json\^" & timeout \/t 2 \/nobreak >nul\)"/);
+  assert.match(buildOverviewCommand(posixStatePath, { resolved: 'posix', scriptKind: 'bash' }), /while true; do clear; node '.*input-kanban-tmux-overview\.js' '\/tmp\/input-kanban\/run_state\.json'; sleep 2; done/);
+});
+
+test('tmux run script generation covers native Windows and POSIX backends', () => {
+  const windowsBase = {
+    codexCommand: 'D:\\Tools\\codex.cmd',
+    codexArgsPrefix: ['D:\\Tools\\node_modules\\@openai\\codex\\bin\\codex.js'],
+    sandbox: 'workspace-write',
+    cwd: 'D:\\UGit\\Input-Kanban',
+    outDir: 'D:\\UGit\\Input-Kanban\\.runs\\planner',
+    runId: 'run_backend',
+    taskId: 'planner',
+    role: 'planner'
+  };
+
+  const ps = buildRunScript({ backend: { resolved: 'powershell', scriptKind: 'powershell', command: 'powershell' }, ...windowsBase });
+  assert.match(ps, /\$CodexLauncher = @\('D:\\Tools\\codex\.cmd', 'D:\\Tools\\node_modules\\@openai\\codex\\bin\\codex\.js'\)/);
+  assert.match(ps, /\$Helper = Join-Path \$OutDir 'run-powershell-helper\.mjs'/);
+  assert.match(ps, /\[System\.IO\.File\]::WriteAllText\(\$Helper, \[System\.Text\.Encoding\]::UTF8\.GetString/);
+  assert.match(ps, /node \$Helper 1>> \$Events 2>> \$StderrLog/);
+  assert.doesNotMatch(ps, /& \$CodexLauncher\[0\]/);
+  assert.match(ps, /& 'powershell' -NoLogo -NoProfile -NoExit/);
+  assert.match(ps, /Get-Content -LiteralPath \$Events -Raw \| node \$TimestampBin --timed-only \$Events \$TimedEvents \| node \$FormatterBin/);
+
+  const cmd = buildRunScript({ backend: { resolved: 'cmd', scriptKind: 'cmd', command: 'cmd.exe' }, ...windowsBase });
+  assert.match(cmd, /set "CWD=D:\\UGit\\Input-Kanban"/);
+  assert.match(cmd, /set "HELPER=%OUT_DIR%\\run-cmd-helper\.mjs"/);
+  assert.match(cmd, /cmd\.exe \/d \/k/);
+
+  const bash = buildRunScript({
+    backend: { resolved: 'posix', scriptKind: 'bash', command: 'bash' },
+    codexCommand: '/usr/local/bin/codex',
+    codexArgsPrefix: ['/opt/codex/bin/codex.js'],
+    sandbox: 'workspace-write',
+    cwd: '/tmp/input-kanban',
+    outDir: '/tmp/input-kanban/.runs/planner',
+    runId: 'run_backend',
+    taskId: 'planner',
+    role: 'planner'
+  });
+  assert.match(bash, /CODEX_LAUNCHER=\('\/usr\/local\/bin\/codex' '\/opt\/codex\/bin\/codex\.js'\)/);
+  assert.match(bash, /CWD='\/tmp\/input-kanban'/);
+  assert.match(bash, /OUT_DIR='\/tmp\/input-kanban\/\.runs\/planner'/);
+  assert.match(bash, /FORMATTER_BIN='/);
+});
+
 test('default runner selects tmux only when requested', () => {
   assert.equal(createDefaultRunner('headless'), headlessRunner);
   assert.equal(createDefaultRunner('tmux').kind, 'tmux');
@@ -180,6 +274,7 @@ test('tmux runner writes run script, metadata, and observes exit_code', async ()
   const { calls, runner: commandRunner } = makeRunner((_command, args) => {
     if (args[0] === '-V') return { code: 0, stdout: 'tmux 3.4\n' };
     if (args[0] === 'has-session') return { code: 1, stderr: 'no such session' };
+    if (args[0] === 'split-window') return { code: 0, stdout: '%12\n' };
     return { code: 0, stdout: '' };
   });
   const runner = createTmuxRunner({
@@ -198,65 +293,83 @@ test('tmux runner writes run script, metadata, and observes exit_code', async ()
     cwd: tmp,
     outDir
   });
-  assert.equal(runner.hasRunning('run_01', 'planner'), true);
-  assert.equal(await fsp.readFile(path.join(outDir, 'prompt.md'), 'utf8'), 'plan this');
+  try {
+    assert.equal(runner.hasRunning('run_01', 'planner'), true);
+    assert.equal(await fsp.readFile(path.join(outDir, 'prompt.md'), 'utf8'), 'plan this');
 
-  const script = await fsp.readFile(path.join(outDir, 'run.sh'), 'utf8');
-  assert.match(script, /CODEX_LAUNCHER=\('\/usr\/local\/bin\/codex'\)/);
-  assert.match(script, /SKIP_GIT_REPO_CHECK=''/);
-  assert.match(script, /"\$\{CODEX_LAUNCHER\[@\]\}" exec \$\{SKIP_GIT_REPO_CHECK:\+"\$SKIP_GIT_REPO_CHECK"\} --json --sandbox/);
-  assert.doesNotMatch(script, /CODEX_BIN=/);
-  assert.match(script, /touch "\$EVENTS" "\$TIMED_EVENTS" "\$STDERR_LOG"/);
-  assert.match(script, /FORMATTER_BIN='/);
-  assert.match(script, /TIMESTAMP_BIN='/);
-  assert.match(script, /> >\(node "\$TIMESTAMP_BIN" "\$EVENTS" "\$TIMED_EVENTS" \| node "\$FORMATTER_BIN"\) 2> >\(tee -a "\$STDERR_LOG" >&2\)/);
-  assert.match(script, /printf '%s' "\$code" > "\$EXIT_CODE"/);
-  assert.match(script, /RUN_ID='run_01'/);
-  assert.match(script, /TASK_ID='planner'/);
-  assert.match(script, /ROLE='planner'/);
-  assert.match(script, /Input Kanban tmux task completed/);
-  assert.match(script, /printf 'runId: %s\\n' "\$RUN_ID"/);
-  assert.match(script, /printf 'taskId: %s\\n' "\$TASK_ID"/);
-  assert.match(script, /printf 'role: %s\\n' "\$ROLE"/);
-  assert.match(script, /printf 'exit code: %s\\n' "\$code"/);
-  assert.match(script, /printf 'artifact dir: %s\\n' "\$OUT_DIR"/);
-  assert.match(script, /Type exit or press Ctrl-D to close this tmux window/);
-  assert.match(script, /exec "\$\{SHELL:-\/bin\/sh\}" -i/);
-  assert.ok(script.indexOf(`printf '%s' "$code" > "$EXIT_CODE"`) < script.indexOf('Input Kanban tmux task completed'));
-  assert.ok(script.indexOf('Input Kanban tmux task completed') < script.indexOf('exec "${SHELL:-/bin/sh}" -i'));
+    const metadata = JSON.parse(await fsp.readFile(path.join(outDir, 'tmux.json'), 'utf8'));
+    const script = await fsp.readFile(metadata.runScript, 'utf8');
+    if (metadata.tmuxShell.scriptKind === 'bash') {
+      assert.match(script, /CODEX_LAUNCHER=\('\/usr\/local\/bin\/codex'\)/);
+      assert.match(script, /SKIP_GIT_REPO_CHECK=''/);
+      assert.match(script, /"\$\{CODEX_LAUNCHER\[@\]\}" exec \$\{SKIP_GIT_REPO_CHECK:\+"\$SKIP_GIT_REPO_CHECK"\} --json --sandbox/);
+      assert.doesNotMatch(script, /CODEX_BIN=/);
+      assert.match(script, /touch "\$EVENTS" "\$TIMED_EVENTS" "\$STDERR_LOG"/);
+      assert.match(script, /FORMATTER_BIN='/);
+      assert.match(script, /TIMESTAMP_BIN='/);
+      assert.match(script, />> "\$EVENTS" 2> >\(tee -a "\$STDERR_LOG" >&2\)/);
+      assert.match(script, /node "\$TIMESTAMP_BIN" --timed-only "\$EVENTS" "\$TIMED_EVENTS" < "\$EVENTS" \| node "\$FORMATTER_BIN"/);
+      assert.match(script, /printf '%s' "\$code" > "\$EXIT_CODE"/);
+      assert.match(script, /RUN_ID='run_01'/);
+      assert.match(script, /TASK_ID='planner'/);
+      assert.match(script, /ROLE='planner'/);
+      assert.match(script, /Type exit or press Ctrl-D to close this tmux window/);
+      assert.match(script, /exec "\$\{SHELL:-\/bin\/sh\}" -i/);
+      assert.ok(script.indexOf(`printf '%s' "$code" > "$EXIT_CODE"`) < script.indexOf('Input Kanban tmux task completed'));
+      assert.ok(script.indexOf('Input Kanban tmux task completed') < script.indexOf('exec "${SHELL:-/bin/sh}" -i'));
+    } else if (metadata.tmuxShell.scriptKind === 'powershell') {
+      assert.match(script, /\$CodexLauncher = @\('\/usr\/local\/bin\/codex'\)/);
+      assert.match(script, /\$SkipGitRepoCheck = @\(\)/);
+      assert.match(script, /\$Helper = Join-Path \$OutDir 'run-powershell-helper\.mjs'/);
+      assert.match(script, /node \$Helper 1>> \$Events 2>> \$StderrLog/);
+      assert.match(script, /Input Kanban tmux task completed/);
+    } else {
+      assert.match(script, /set "HELPER=%OUT_DIR%\\run-cmd-helper\.mjs"/);
+      assert.match(script, /node "%HELPER%" 1>> "%EVENTS%" 2>> "%STDERR_LOG%"/);
+      assert.match(script, /Input Kanban tmux task completed/);
+    }
 
-  const metadata = JSON.parse(await fsp.readFile(path.join(outDir, 'tmux.json'), 'utf8'));
-  assert.equal(metadata.type, 'input_kanban_tmux_task');
-  assert.equal(metadata.runner, 'tmux');
-  assert.equal(metadata.ready, true);
-  assert.equal(metadata.status, 'ready');
-  assert.equal(metadata.sessionName, 'input-kanban-run_01');
-  assert.equal(metadata.windowName, 'planner');
-  assert.equal(metadata.target, 'input-kanban-run_01:planner');
-  assert.equal(metadata.attachCommand, 'tmux attach-session -t input-kanban-run_01');
-  assert.equal(metadata.selectWindowCommand, 'tmux select-window -t input-kanban-run_01:planner');
-  assert.equal(metadata.selectCommand, metadata.selectWindowCommand);
-  assert.equal(metadata.runScript, path.join(outDir, 'run.sh'));
-  assert.ok(metadata.readyAt);
+    assert.equal(metadata.type, 'input_kanban_tmux_task');
+    assert.equal(metadata.runner, 'tmux');
+    assert.equal(metadata.ready, true);
+    assert.equal(metadata.status, 'ready');
+    assert.equal(metadata.sessionName, 'input-kanban-run_01');
+    assert.equal(metadata.windowName, 'planner');
+    assert.equal(metadata.target, 'input-kanban-run_01:planner');
+    assert.equal(metadata.attachCommand, 'tmux attach-session -t input-kanban-run_01');
+    assert.equal(metadata.selectWindowCommand, 'tmux select-window -t input-kanban-run_01:planner');
+    assert.equal(metadata.selectCommand, metadata.selectWindowCommand);
+    assert.equal(metadata.paneId, '%12');
+    assert.equal(metadata.paneTarget, '%12');
+    const paneJoiner = metadata.tmuxShell.scriptKind === 'cmd' ? ' & ' : '; ';
+    assert.equal(metadata.selectPaneCommand, `tmux select-window -t input-kanban-run_01:planner${paneJoiner}tmux select-pane -t %12`);
+    assert.equal(metadata.paneCommand, metadata.selectPaneCommand);
+    assert.equal(metadata.attachPaneCommand, `tmux select-window -t input-kanban-run_01:planner${paneJoiner}tmux select-pane -t %12${paneJoiner}tmux attach-session -t input-kanban-run_01`);
+    assert.ok(metadata.readyAt);
 
-  assert.deepEqual(calls[0].args, ['-V']);
-  assert.deepEqual(calls[1].args, ['has-session', '-t', 'input-kanban-run_01']);
-  assert.deepEqual(calls[2].args, ['-V']);
-  assert.deepEqual(calls[3].args.slice(0, -1), ['new-session', '-d', '-s', 'input-kanban-run_01', '-n', 'planner', '-c', tmp]);
-  assert.deepEqual(calls[4].args, ['-V']);
-  assert.deepEqual(calls[5].args.slice(0, -1), ['split-window', '-t', 'input-kanban-run_01:planner', '-v', '-c', tmp]);
-  assert.deepEqual(calls[6].args, ['-V']);
-  assert.deepEqual(calls[7].args, ['select-layout', '-t', 'input-kanban-run_01:planner', 'tiled']);
-  assert.match(calls[3].args.at(-1), /input-kanban-tmux-overview\.js/);
-  assert.match(calls[3].args.at(-1), /run_state\.json/);
-  assert.equal(calls[5].args.at(-1), path.join(outDir, 'run.sh'));
-  assert.equal(calls.some(call => call.args.includes('send-keys')), false);
-
-  const exitCode = await new Promise(resolve => {
-    handle.onExit(resolve);
-    fsp.writeFile(path.join(outDir, 'exit_code'), '0');
-  });
-  assert.equal(exitCode, 0);
+    assert.deepEqual(calls[0].args, ['-V']);
+    assert.deepEqual(calls[1].args, ['has-session', '-t', 'input-kanban-run_01']);
+    assert.deepEqual(calls[2].args, ['-V']);
+    assert.deepEqual(calls[3].args.slice(0, -1), ['new-session', '-d', '-s', 'input-kanban-run_01', '-n', 'planner', '-c', tmp]);
+    assert.deepEqual(calls[4].args, ['-V']);
+    assert.deepEqual(calls[6].args, ['-V']);
+    assert.match(calls[3].args.at(-1), /input-kanban-tmux-overview\.js/);
+    assert.match(calls[3].args.at(-1), /run_state\.json/);
+    assert.deepEqual(calls[5].args.slice(0, 8), ['split-window', '-t', 'input-kanban-run_01:planner', '-v', '-P', '-F', '#{pane_id}', '-c']);
+    assert.equal(calls[5].args[8], tmp);
+    if (metadata.tmuxShell.scriptKind === 'powershell' || metadata.tmuxShell.scriptKind === 'cmd') {
+      assert.deepEqual(calls[7].args.slice(0, 4), ['send-keys', '-t', '%12', '-l']);
+      assert.match(calls[7].args.at(-1), /run\.(ps1|cmd)/);
+      assert.deepEqual(calls[9].args, ['send-keys', '-t', '%12', 'C-m']);
+      assert.deepEqual(calls[11].args, ['select-layout', '-t', 'input-kanban-run_01:planner', 'tiled']);
+    } else {
+      assert.equal(calls[5].args.at(-1), metadata.runScript);
+      assert.deepEqual(calls[7].args, ['select-layout', '-t', 'input-kanban-run_01:planner', 'tiled']);
+      assert.equal(calls.some(call => call.args.includes('send-keys')), false);
+    }
+  } finally {
+    await finishTmuxHandle(handle, outDir);
+  }
   assert.equal(runner.hasRunning('run_01', 'planner'), false);
 });
 
@@ -269,6 +382,7 @@ test('tmux run script quotes codex launcher arrays with spaces and shell charact
   const { runner: commandRunner } = makeRunner((_command, args) => {
     if (args[0] === '-V') return { code: 0, stdout: 'tmux 3.4\n' };
     if (args[0] === 'has-session') return { code: 1, stderr: 'no such session' };
+    if (args[0] === 'split-window') return { code: 0, stdout: '%13\n' };
     return { code: 0, stdout: '' };
   });
   const runner = createTmuxRunner({
@@ -286,22 +400,22 @@ test('tmux run script quotes codex launcher arrays with spaces and shell charact
     outDir
   });
 
-  const script = await fsp.readFile(path.join(outDir, 'run.sh'), 'utf8');
-  if (process.platform === 'win32') {
-    assert.match(script, /CODEX_LAUNCHER=\('/);
-    assert.ok(script.includes(process.execPath));
-    assert.match(script, /codex user'\\''s stub\.js/);
-  } else {
-    assert.match(script, /CODEX_LAUNCHER=\('/);
-    assert.match(script, /codex user'\\''s stub\.js/);
+  try {
+    const metadata = JSON.parse(await fsp.readFile(path.join(outDir, 'tmux.json'), 'utf8'));
+    const script = await fsp.readFile(metadata.runScript, 'utf8');
+    if (metadata.tmuxShell.scriptKind === 'bash') {
+      assert.match(script, /CODEX_LAUNCHER=\('/);
+      assert.match(script, /codex user'\\''s stub\.js/);
+      assert.match(script, /"\$\{CODEX_LAUNCHER\[@\]\}" exec \$\{SKIP_GIT_REPO_CHECK:\+"\$SKIP_GIT_REPO_CHECK"\} --json --sandbox/);
+    } else if (metadata.tmuxShell.scriptKind === 'powershell') {
+      assert.match(script, /\$CodexLauncher = @\(/);
+      assert.match(script, /codex user''s stub\.js/);
+    } else {
+      assert.match(script, /run-cmd-helper\.mjs/);
+    }
+  } finally {
+    await finishTmuxHandle(handle, outDir);
   }
-  assert.match(script, /"\$\{CODEX_LAUNCHER\[@\]\}" exec \$\{SKIP_GIT_REPO_CHECK:\+"\$SKIP_GIT_REPO_CHECK"\} --json --sandbox/);
-
-  const exitCode = await new Promise(resolve => {
-    handle.onExit(resolve);
-    fsp.writeFile(path.join(outDir, 'exit_code'), '0');
-  });
-  assert.equal(exitCode, 0);
 });
 
 test('tmux runner records failed metadata without ready commands when tmux creation fails', async () => {
@@ -345,6 +459,7 @@ test('tmux run script keep-open summary is generated for worker and judge roles'
   const { runner: commandRunner } = makeRunner((_command, args) => {
     if (args[0] === '-V') return { code: 0, stdout: 'tmux 3.4\n' };
     if (args[0] === 'has-session') return { code: 0, stdout: '' };
+    if (args[0] === 'split-window') return { code: 0, stdout: '%14\n' };
     return { code: 0, stdout: '' };
   });
   const runner = createTmuxRunner({
@@ -363,19 +478,30 @@ test('tmux run script keep-open summary is generated for worker and judge roles'
       cwd: tmp,
       outDir
     });
-    const script = await fsp.readFile(path.join(outDir, 'run.sh'), 'utf8');
-    const expectedRole = taskId === 'judge' ? 'judge' : 'worker';
-    assert.match(script, new RegExp(`RUN_ID='run_roles'`));
-    assert.match(script, new RegExp(`TASK_ID='${taskId}'`));
-    assert.match(script, new RegExp(`ROLE='${expectedRole}'`));
-    assert.match(script, /Type exit or press Ctrl-D to close this tmux window/);
-    assert.ok(script.indexOf(`printf '%s' "$code" > "$EXIT_CODE"`) < script.indexOf('Input Kanban tmux task completed'));
-
-    const exitCode = await new Promise(resolve => {
-      handle.onExit(resolve);
-      fsp.writeFile(path.join(outDir, 'exit_code'), '0');
-    });
-    assert.equal(exitCode, 0);
+    try {
+      const metadata = JSON.parse(await fsp.readFile(path.join(outDir, 'tmux.json'), 'utf8'));
+      const script = await fsp.readFile(metadata.runScript, 'utf8');
+      const expectedRole = taskId === 'judge' ? 'judge' : 'worker';
+      if (metadata.tmuxShell.scriptKind === 'bash') {
+        assert.match(script, new RegExp(`RUN_ID='run_roles'`));
+        assert.match(script, new RegExp(`TASK_ID='${taskId}'`));
+        assert.match(script, new RegExp(`ROLE='${expectedRole}'`));
+        assert.match(script, /Type exit or press Ctrl-D to close this tmux window/);
+        assert.ok(script.indexOf(`printf '%s' "$code" > "$EXIT_CODE"`) < script.indexOf('Input Kanban tmux task completed'));
+      } else if (metadata.tmuxShell.scriptKind === 'powershell') {
+        assert.match(script, /\$RunId = 'run_roles'/);
+        assert.match(script, new RegExp(`\\$TaskId = '${taskId}'`));
+        assert.match(script, new RegExp(`\\$Role = '${expectedRole}'`));
+        assert.match(script, /Type exit to close this tmux window/);
+      } else {
+        assert.match(script, /set "RUN_ID=run_roles"/);
+        assert.match(script, new RegExp(`set "TASK_ID=${taskId}"`));
+        assert.match(script, new RegExp(`set "ROLE=${expectedRole}"`));
+        assert.match(script, /Type exit to close this tmux window/);
+      }
+    } finally {
+      await finishTmuxHandle(handle, outDir);
+    }
   }
 });
 
@@ -385,6 +511,7 @@ test('tmux runner can include Codex git repo check bypass in run script', async 
   const { runner: commandRunner } = makeRunner((_command, args) => {
     if (args[0] === '-V') return { code: 0, stdout: 'tmux 3.4\n' };
     if (args[0] === 'has-session') return { code: 1, stderr: 'no such session' };
+    if (args[0] === 'split-window') return { code: 0, stdout: '%15\n' };
     return { code: 0, stdout: '' };
   });
   const runner = createTmuxRunner({
@@ -405,15 +532,20 @@ test('tmux runner can include Codex git repo check bypass in run script', async 
     skipGitRepoCheck: true
   });
 
-  const script = await fsp.readFile(path.join(outDir, 'run.sh'), 'utf8');
-  assert.match(script, /SKIP_GIT_REPO_CHECK='--skip-git-repo-check'/);
-  assert.match(script, /exec \$\{SKIP_GIT_REPO_CHECK:\+"\$SKIP_GIT_REPO_CHECK"\} --json --sandbox/);
-
-  const exitCode = await new Promise(resolve => {
-    handle.onExit(resolve);
-    fsp.writeFile(path.join(outDir, 'exit_code'), '0');
-  });
-  assert.equal(exitCode, 0);
+  try {
+    const metadata = JSON.parse(await fsp.readFile(path.join(outDir, 'tmux.json'), 'utf8'));
+    const script = await fsp.readFile(metadata.runScript, 'utf8');
+    if (metadata.tmuxShell.scriptKind === 'bash') {
+      assert.match(script, /SKIP_GIT_REPO_CHECK='--skip-git-repo-check'/);
+      assert.match(script, /exec \$\{SKIP_GIT_REPO_CHECK:\+"\$SKIP_GIT_REPO_CHECK"\} --json --sandbox/);
+    } else if (metadata.tmuxShell.scriptKind === 'powershell') {
+      assert.match(script, /\$SkipGitRepoCheck = @\('--skip-git-repo-check'\)/);
+    } else {
+      assert.match(script, /run-cmd-helper\.mjs/);
+    }
+  } finally {
+    await finishTmuxHandle(handle, outDir);
+  }
 });
 
 test('headless runner passes Codex git repo check bypass when requested', async () => {

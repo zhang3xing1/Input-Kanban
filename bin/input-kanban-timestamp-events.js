@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const [eventsFile, timedEventsFile] = process.argv.slice(2);
+const timedOnly = process.argv.includes('--timed-only');
+const positional = process.argv.slice(2).filter(arg => arg !== '--timed-only');
+const [eventsFile, timedEventsFile] = positional;
 if (!eventsFile || !timedEventsFile) {
   console.error('usage: input-kanban-timestamp-events.js <events.jsonl> <events_timed.jsonl>');
   process.exit(2);
@@ -18,7 +20,7 @@ const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity 
 
 for await (const line of rl) {
   const rawLine = `${line}\n`;
-  events.write(rawLine);
+  if (!timedOnly) events.write(rawLine);
   process.stdout.write(rawLine);
   const receivedAt = new Date().toISOString();
   try {

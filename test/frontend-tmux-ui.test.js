@@ -8,6 +8,7 @@ const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] || '';
 
 function createFrontendHarness() {
   const calls = [];
+  const storage = new Map();
   const elements = new Map();
   const elementForId = id => {
     if (!elements.has(id)) {
@@ -38,7 +39,11 @@ function createFrontendHarness() {
   const globalElementIds = ['label', 'repo', 'runsDir', 'runnerMode', 'maxParallel', 'workerSandbox', 'workerBackend', 'planApproval', 'taskText', 'tmuxDependencyModal', 'showTmuxInstallCommandBtn', 'copyTmuxDependencyCommandBtn'];
   const context = {
     console: { error() {} },
-    localStorage: { getItem() { return ''; }, setItem() {} },
+    localStorage: {
+      getItem(key) { return storage.has(key) ? storage.get(key) : ''; },
+      setItem(key, value) { storage.set(key, String(value)); }
+    },
+    navigator: { clipboard: { writeText: async text => { calls.push({ kind: 'clipboard', text }); } } },
     performance: { now() { return 0; } },
     setInterval() {},
     setTimeout(fn) { if (typeof fn === 'function') fn(); },
@@ -65,7 +70,7 @@ function createFrontendHarness() {
   context.workerBackend.value = 'codex';
   context.taskText.value = 'noop';
   const bootScript = script
-    .replace(/\r?\ninitializeWorkerSandboxPreference\(\);\r?\ninitializeWorkerBackendPreference\(\);\r?\ninitSessionManagementResize\(\);\r?\nrenderActionToolbar\(\);\r?\nloadCodexStatus\(\)\.catch\(console\.error\);\r?\nloadPiStatus\(\)\.catch\(console\.error\);\r?\nloadAppConfig\(\)\.catch\(console\.error\);\r?\nloadHealth\(\)\.then\(refreshRuns\);\r?\nsetInterval\(\(\) => \{ if \(selectedRun\) refreshSelected\(\{auto:true\}\)\.catch\(console\.error\); else refreshRuns\(\)\.catch\(console\.error\); \}, AUTO_REFRESH_MS\);\s*$/, '');
+    .replace(/\r?\ninitializeRunnerModePreference\(\);\r?\ninitializeWorkerSandboxPreference\(\);\r?\ninitializeWorkerBackendPreference\(\);\r?\ninitSessionManagementResize\(\);\r?\nrenderActionToolbar\(\);\r?\nloadCodexStatus\(\)\.catch\(console\.error\);\r?\nloadPiStatus\(\)\.catch\(console\.error\);\r?\nloadAppConfig\(\)\.catch\(console\.error\);\r?\nloadHealth\(\)\.then\(refreshRuns\);\r?\nsetInterval\(\(\) => \{ if \(selectedRun\) refreshSelected\(\{auto:true\}\)\.catch\(console\.error\); else refreshRuns\(\)\.catch\(console\.error\); \}, AUTO_REFRESH_MS\);\s*$/, '');
   vm.runInNewContext(`${bootScript}
 api = async (requestPath, opts = {}) => { calls.push({ kind: 'api', path: requestPath, opts }); return {}; };
 refreshSelected = async () => { calls.push({ kind: 'refreshSelected' }); };
@@ -73,10 +78,15 @@ globalThis.__setRun = (runId, state) => { selectedRun = runId; currentState = st
 globalThis.__runActionState = runActionState;
 globalThis.__dispatchRun = dispatchRun;
 globalThis.__createRun = createRun;
-globalThis.__showTmuxInstallCommand = showTmuxInstallCommand;
-globalThis.__hasRunTmuxMetadata = hasRunTmuxMetadata;
-globalThis.__setApi = nextApi => { api = nextApi; };
-globalThis.__calls = calls;`, context);
+globalThis.__initializeRunnerModePreference = initializeRunnerModePreference;
+globalThis.__saveRunnerModePreference = saveRunnerModePreference;
+  globalThis.__showTmuxInstallCommand = showTmuxInstallCommand;
+  globalThis.__hasRunTmuxMetadata = hasRunTmuxMetadata;
+  globalThis.__taskById = taskById;
+  globalThis.__taskActionInfoCell = taskActionInfoCell;
+  globalThis.__setApi = nextApi => { api = nextApi; };
+  globalThis.__calls = calls;`, context);
+  context.__storage = storage;
   return context;
 }
 
@@ -158,12 +168,15 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.match(html, /<option value="default" selected>跟随默认<\/option>/);
   assert.match(html, /<option value="tmux">tmux<\/option>/);
   assert.match(html, /id="runnerHint"/);
+  assert.doesNotMatch(html, /<select id="tmuxShellMode">/);
+  assert.doesNotMatch(html, /id="defaultTmuxShellSelect"/);
   assert.match(html, /id="environmentModal"/);
   assert.match(html, /id="defaultRunnerSelect"/);
   assert.match(html, /id="tmuxStatus"/);
   assert.match(script, /async function loadAppConfig\(\{ force = false \} = \{\}\)/);
   assert.match(script, /api\('\/api\/config'\)/);
   assert.match(script, /api\('\/api\/tmux'\)/);
+  assert.doesNotMatch(script, /\/api\/tmux\?shell=/);
   assert.match(script, /async function ensureAppConfigLoaded\(\)/);
   assert.match(script, /async function ensureRunnerSelectionReady\(\)/);
   assert.match(script, /async function ensureTmuxForCreate\(\)/);
@@ -203,16 +216,24 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.match(script, /开始执行/);
   assert.match(script, /const WORKER_SANDBOX_STORAGE_KEY = 'input-kanban\.workerSandbox'/);
   assert.match(script, /const WORKER_BACKEND_STORAGE_KEY = 'input-kanban\.workerBackend'/);
+  assert.match(script, /const RUNNER_MODE_STORAGE_KEY = 'input-kanban\.runnerMode'/);
   assert.match(script, /const VALID_WORKER_BACKENDS = new Set\(\['codex', 'pi'\]\)/);
   assert.match(script, /function initializeWorkerBackendPreference\(\)/);
   assert.match(script, /initializeWorkerBackendPreference\(\);/);
   assert.match(script, /const VALID_WORKER_SANDBOXES = new Set\(\['read-only', 'workspace-write', 'danger-full-access'\]\)/);
+  assert.match(script, /const VALID_RUNNER_OPTIONS = new Set\(\['default', 'headless', 'tmux'\]\)/);
   assert.match(script, /跳过 Git 检查/);
   assert.match(script, /function initializeWorkerSandboxPreference\(\)/);
+  assert.match(script, /function initializeRunnerModePreference\(\)/);
+  assert.match(script, /function saveRunnerModePreference\(\)/);
   assert.match(script, /localStorage\.getItem\(WORKER_SANDBOX_STORAGE_KEY\)/);
+  assert.match(script, /localStorage\.getItem\(RUNNER_MODE_STORAGE_KEY\)/);
   assert.match(script, /select\.addEventListener\('change', saveWorkerSandboxPreference\)/);
-  assert.match(script, /saveWorkerSandboxPreference\(\);\r?\n  if \(!await ensureRunnerSelectionReady\(\)\) return;\r?\n  if \(!await ensureTmuxForCreate\(\)\) return;\r?\n  const body = \{ label: label\.value/);
-  assert.match(script, /runner: selectedRunnerMode\(\)/);
+  assert.match(script, /select\.addEventListener\('change', saveRunnerModePreference\)/);
+  assert.match(script, /saveWorkerSandboxPreference\(\);\r?\n  saveWorkerBackendPreference\(\);\r?\n  saveRunnerModePreference\(\);\r?\n  if \(!await ensureRunnerSelectionReady\(\)\) return;\r?\n  if \(!await ensureTmuxForCreate\(\)\) return;\r?\n  const runner = selectedRunnerMode\(\);/);
+  assert.match(script, /saveRunnerModePreference\(\);\r?\n  if \(!await ensureRunnerSelectionReady\(\)\) return;/);
+  assert.doesNotMatch(script, /selectedTmuxShellMode/);
+  assert.doesNotMatch(script, /body\.tmuxShell/);
   assert.match(html, /<div id="actionToolbar" class="toolbar"><\/div>/);
   assert.match(html, /button\.state-pending/);
   assert.match(html, /button\.state-active/);
@@ -360,6 +381,24 @@ test('create form does not require config loading for explicit headless runner',
   assert.equal(apiPaths[0], '/api/runs');
   const createCall = harness.__calls.find(call => call.kind === 'api' && call.path === '/api/runs');
   assert.equal(JSON.parse(createCall.opts.body).runner, 'headless');
+});
+
+test('create form remembers the selected runner mode', async () => {
+  const harness = createFrontendHarness();
+  harness.runnerMode.value = 'tmux';
+  harness.__setApi(async (requestPath, opts = {}) => {
+    harness.__calls.push({ kind: 'api', path: requestPath, opts });
+    if (requestPath === '/api/tmux') return { tmux: { installed: true, shellAvailable: true, version: 'tmux 3.4' } };
+    if (requestPath === '/api/runs') return { runId: 'run_runner_memory' };
+    return {};
+  });
+
+  await harness.__createRun();
+
+  assert.equal(harness.__storage.get('input-kanban.runnerMode'), 'tmux');
+  const createCall = harness.__calls.find(call => call.kind === 'api' && call.path === '/api/runs');
+  assert.equal(JSON.parse(createCall.opts.body).runner, 'tmux');
+  assert.equal(Object.hasOwn(JSON.parse(createCall.opts.body), 'tmuxShell'), false);
 });
 
 test('run action state maps reachable statuses to executable actions', () => {
@@ -598,7 +637,7 @@ test('manual completion modal captures success result text', () => {
   assert.doesNotMatch(script, /confirm\(`确认将任务/);
 });
 
-test('tmux copy action is only exposed at run attach level', () => {
+test('tmux copy action stays on the run header only', async () => {
   assert.match(script, /return state\?\.tmux\?\.tmuxAttachCommand \|\| `tmux attach-session -t \$\{tmuxSessionName\(state\)\}`/);
   assert.match(script, /copyTmuxRunCommand\(event\)/);
   assert.match(script, /function gitChip\(\)/);
@@ -609,5 +648,23 @@ test('tmux copy action is only exposed at run attach level', () => {
   assert.doesNotMatch(script, /dirty \? ' · dirty'/);
   assert.match(script, /async function copyRepoPath\(event, repoPath = currentState\?\.workspacePath \|\| currentState\?\.repo \|\| ''\)/);
   assert.doesNotMatch(script, /copyTmuxCommand/);
-  assert.doesNotMatch(script, /select-window/);
+  assert.doesNotMatch(script, /function taskTmuxCommand\(t\)/);
+  assert.doesNotMatch(script, /function taskTmuxButton\(id, t\)/);
+  assert.doesNotMatch(script, /task-tmux-copy/);
+  assert.doesNotMatch(script, /async function copyTaskTmuxCommand\(event, taskId\)/);
+  assert.doesNotMatch(script, /attachPaneCommand \|\| tmux\.selectPaneCommand \|\| tmux\.paneCommand/);
+
+  const harness = createFrontendHarness();
+  const task = {
+    id: 'T-01',
+    status: 'running',
+    tmux: {
+      ready: true,
+      tmuxShell: { scriptKind: 'powershell' },
+      attachPaneCommand: 'tmux select-window -t input-kanban-run_01:batch-1 \\; select-pane -t %12 \\; attach-session -t input-kanban-run_01'
+    }
+  };
+  harness.__setRun('run_01', { batches: [{ id: 'B-01', tasks: [task] }], tasks: [] });
+  assert.equal(harness.__taskById('T-01'), task);
+  assert.equal(harness.__taskActionInfoCell('T-01', task), '-');
 });

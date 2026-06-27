@@ -9,3 +9,5 @@ ENVIRONMENT.local.md
 artifacts/
 tmp/
 .claude/
+.omx
+.serena
