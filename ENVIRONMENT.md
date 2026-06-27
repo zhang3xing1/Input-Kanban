@@ -11,10 +11,12 @@ CLI options take precedence over environment variables. Environment variables ta
 - `KANBAN_DEFAULT_WORKSPACE`: Default workspace path for new runs. Default: the current working directory when `input-kanban` is launched. CLI option: `--workspace`. `KANBAN_DEFAULT_REPO` remains as a compatibility alias. Creating a run only requires this path to exist and be a directory; Git is detected and marked when available.
 - `KANBAN_RUNS_DIR`: Directory for run state, logs, and artifacts. Default: `.input-kanban/runs` under the user's home directory. CLI option: `--runs-dir`.
 - `KANBAN_CODEX_BIN`: Codex CLI executable name or path. Default: `codex`. CLI option: `--codex-bin`.
+- `KANBAN_PI_BIN`: Pi Coding Agent CLI executable name or path used for command availability monitoring. Default: `pi`. This is detection-only in the current release; Input Kanban still executes tasks through Codex.
 - `KANBAN_CONFIG_PATH`: Local Input Kanban config path. Default: `~/.input-kanban/config.json`.
 - `KANBAN_RUNNER`: Runner mode. Supported values: `headless`, `tmux`. CLI option: `--runner`. When set, it overrides the local config default runner.
 - `KANBAN_AUTO_POLL_MS`: Poll interval for the Web server background scheduler. Default: `3000`.
 - `KANBAN_AUTO_MAX_RETRIES`: Maximum automatic retries for recoverable failed/unknown tasks in the scheduler. Default: `1`.
+- `KANBAN_PI_CHECK_LATEST`: Set to `1` to let `/api/pi` also query npm for the latest `@earendil-works/pi-coding-agent` version. Default: disabled, so detection only runs `pi --version`.
 
 ## Environment Example
 
@@ -23,6 +25,7 @@ PORT=8787 \
 KANBAN_DEFAULT_WORKSPACE=/path/to/workspace \
 KANBAN_RUNS_DIR=/path/to/kanban-runs \
 KANBAN_CODEX_BIN=codex \
+KANBAN_PI_BIN=pi \
 KANBAN_RUNNER=headless \
 input-kanban
 ```
@@ -53,5 +56,6 @@ input-kanban \
 - tmux role windows stay open after the Codex command exits. The runner writes `exit_code` before entering the keep-open shell so Node.js status refresh can continue to advance from filesystem state.
 - The dashboard exposes the run-level `tmux attach-session` copy action after tmux metadata is available. File viewer panels do not repeat tmux terminal details.
 - `codex exec` is non-interactive in current supported usage. tmux mode does not implement automatic approval and does not turn `codex exec` into an approval UI.
+- `/api/pi` and the Web footer can detect whether the `pi` command is visible to the backend process. This is preparatory monitoring only; task execution remains Codex-backed until a future agent backend is implemented.
 - The runtime runs directory contains task text, logs, model output, artifacts, and possible audit information. It should not be committed to git.
 - Avoid writing machine-specific absolute paths into public or shared documentation.

@@ -1,14 +1,12 @@
 import { fileURLToPath } from 'node:url';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
-  CODEX_BIN,
   ensureDir,
   nowIso,
   readTextMaybe,
   writeJsonAtomic
 } from '../utils.js';
-import { resolveCodexLauncher } from '../codexLauncher.js';
+import { createCodexExecutor } from '../agents/codexExecutor.js';
 import {
   DEFAULT_TMUX_BIN,
   sanitizeTmuxSessionName,
@@ -45,10 +43,6 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-function bashArrayAssignment(name, values) {
-  return `${name}=(${values.map(value => shellQuote(value)).join(' ')})`;
-}
-
 const BIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../bin');
 const FORMATTER_BIN = path.join(BIN_DIR, 'input-kanban-format-events.js');
 const TIMESTAMP_BIN = path.join(BIN_DIR, 'input-kanban-timestamp-events.js');
@@ -60,70 +54,24 @@ function buildOverviewCommand(runStatePath) {
   return `while true; do clear; node ${quotedOverviewBin} ${quotedStatePath}; sleep 2; done`;
 }
 
-function buildRunScript({ codexCommand, codexArgsPrefix = [], formatterBin = FORMATTER_BIN, timestampBin = TIMESTAMP_BIN, sandbox, cwd, outDir, runId, taskId, role, skipGitRepoCheck = false }) {
-  const codexLauncher = bashArrayAssignment('CODEX_LAUNCHER', [codexCommand, ...codexArgsPrefix]);
-  const skipGitRepoCheckArg = skipGitRepoCheck ? "SKIP_GIT_REPO_CHECK='--skip-git-repo-check'" : "SKIP_GIT_REPO_CHECK=''";
-  return `#!/usr/bin/env bash
-set -u
-
-${codexLauncher}
-${skipGitRepoCheckArg}
-SANDBOX=${shellQuote(sandbox)}
-CWD=${shellQuote(cwd)}
-OUT_DIR=${shellQuote(outDir)}
-RUN_ID=${shellQuote(runId)}
-TASK_ID=${shellQuote(taskId)}
-ROLE=${shellQuote(role)}
-PROMPT_FILE="$OUT_DIR/prompt.md"
-EVENTS="$OUT_DIR/events.jsonl"
-TIMED_EVENTS="$OUT_DIR/events_timed.jsonl"
-STDERR_LOG="$OUT_DIR/stderr.log"
-FORMATTER_BIN=${shellQuote(formatterBin)}
-TIMESTAMP_BIN=${shellQuote(timestampBin)}
-LAST_MESSAGE="$OUT_DIR/last_message.md"
-EXIT_CODE="$OUT_DIR/exit_code"
-
-cd "$CWD"
-rm -f "$EXIT_CODE"
-touch "$EVENTS" "$TIMED_EVENTS" "$STDERR_LOG"
-"\${CODEX_LAUNCHER[@]}" exec \${SKIP_GIT_REPO_CHECK:+"$SKIP_GIT_REPO_CHECK"} --json --sandbox "$SANDBOX" -C "$CWD" -o "$LAST_MESSAGE" "$(<"$PROMPT_FILE")" > >(node "$TIMESTAMP_BIN" "$EVENTS" "$TIMED_EVENTS" | node "$FORMATTER_BIN") 2> >(tee -a "$STDERR_LOG" >&2)
-code=$?
-printf '%s' "$code" > "$EXIT_CODE"
-printf '\\nInput Kanban tmux task completed.\\n'
-printf 'runId: %s\\n' "$RUN_ID"
-printf 'taskId: %s\\n' "$TASK_ID"
-printf 'role: %s\\n' "$ROLE"
-printf 'exit code: %s\\n' "$code"
-printf 'artifact dir: %s\\n' "$OUT_DIR"
-printf 'Type exit or press Ctrl-D to close this tmux window.\\n'
-exec "\${SHELL:-/bin/sh}" -i
-`;
-}
-
 export function createTmuxRunner({
-  codexBin = CODEX_BIN,
+  codexBin,
+  agentExecutor = createCodexExecutor({ codexBin }),
   tmuxBin = DEFAULT_TMUX_BIN,
   tmuxOptions = {},
   pollMs = 1000
 } = {}) {
   const runningWindows = new Map();
 
-  async function startCodexTask({ runId, taskId, batchId = null, runStatePath = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false }) {
+  async function startAgentTask({ runId, taskId, batchId = null, runStatePath = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false }) {
     await ensureDir(outDir);
     const sessionName = sessionNameForRun(runId);
     const role = roleForTask(taskId);
     const windowName = windowNameForTask(taskId, batchId);
     const key = processKey(runId, taskId);
-    const promptFile = path.join(outDir, 'prompt.md');
-    const runScript = path.join(outDir, 'run.sh');
-    const exitFile = path.join(outDir, 'exit_code');
-    const metadataFile = path.join(outDir, 'tmux.json');
     const startedAt = nowIso();
-
-    await fsp.writeFile(promptFile, prompt);
-    const { command: codexCommand, argsPrefix: codexArgsPrefix } = resolveCodexLauncher(codexBin);
-    await fsp.writeFile(runScript, buildRunScript({ codexCommand, codexArgsPrefix, sandbox, cwd, outDir, runId, taskId, role, skipGitRepoCheck }));
-    await fsp.chmod(runScript, 0o755);
+    const prepared = await agentExecutor.prepareTmuxTask({ prompt, formatterBin: FORMATTER_BIN, timestampBin: TIMESTAMP_BIN, sandbox, cwd, outDir, runId, taskId, role, skipGitRepoCheck });
+    const { prompt: promptFile, runScript, exitCode: exitFile, tmuxMetadata: metadataFile } = prepared.paths;
 
     const metadata = {
       type: 'input_kanban_tmux_task',
@@ -228,5 +176,5 @@ export function createTmuxRunner({
     return runningWindows.has(processKey(runId, taskId));
   }
 
-  return { kind: 'tmux', sessionNameForRun, startCodexTask, stopRun, hasRunning };
+  return { kind: 'tmux', sessionNameForRun, startAgentTask, startCodexTask: startAgentTask, stopRun, hasRunning };
 }

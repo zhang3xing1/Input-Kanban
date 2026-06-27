@@ -502,7 +502,7 @@ export async function startPlanner(runId) {
     const taskText = await fsp.readFile(path.join(runDir, 'task.md'), 'utf8');
     const prompt = defaultPlannerPrompt(state, taskText);
     const activeRunner = runnerForState(state);
-    const child = await activeRunner.startCodexTask({ runId: state.runId, taskId: 'planner', batchId: 'planner', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
+    const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: 'planner', batchId: 'planner', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
     state.status = 'planning';
     state.planner = { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir, attempt: (state.plannerAttempts?.length || 0) + 1 };
     await saveRun(state);
@@ -735,7 +735,7 @@ ORCHESTRATOR_BATCH_ID: ${task.batchId || 'batch-1'}
 ${task.prompt}${workerArtifactInstructions(state, task)}${upstreamArtifactInstructions(state, task)}
 `;
   const activeRunner = runnerForState(state);
-  const child = await activeRunner.startCodexTask({ runId: state.runId, taskId: task.id, batchId: task.batchId || 'batch-1', runStatePath: statePath(runDir), prompt: fullPrompt, sandbox: task.sandbox || state.workerSandbox || 'workspace-write', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
+  const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: task.id, batchId: task.batchId || 'batch-1', runStatePath: statePath(runDir), prompt: fullPrompt, sandbox: task.sandbox || state.workerSandbox || 'workspace-write', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
   Object.assign(task, { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir });
 }
 
@@ -901,7 +901,7 @@ export async function startJudge(runId) {
     await writeJsonAtomic(judgeInputPath, judgeInput);
     const prompt = defaultJudgePrompt(state, judgeInputPath);
     const activeRunner = runnerForState(state);
-    const child = await activeRunner.startCodexTask({ runId: state.runId, taskId: 'judge', batchId: 'judge', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
+    const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: 'judge', batchId: 'judge', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
     const previousJudgeAttempts = [
       ...(state.judgeAttempts || []).map(item => Number(item.attempt || 0)),
       Number(state.judge?.attempt || 0)

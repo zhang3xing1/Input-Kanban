@@ -5,17 +5,18 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { CodexAppServerClient } from './appServerClient.js';
-import { APP_ROOT, CODEX_BIN, DEFAULT_WORKSPACE, DEFAULT_REPO, PACKAGE_VERSION, RUNS_DIR, detectCodexInfo, normalizeRunner } from './utils.js';
+import { APP_ROOT, CODEX_BIN, DEFAULT_WORKSPACE, DEFAULT_REPO, PACKAGE_VERSION, PI_BIN, RUNS_DIR, detectCodexInfo, detectPiInfo, normalizeRunner } from './utils.js';
 import { configPath, effectiveRunner, readLocalConfig, updateLocalConfig } from './config.js';
 import { detectTmuxDependency } from './deps.js';
 import { createRun, listRuns, startPlanner, dispatchRun, startJudge, refreshRun, readRunFile, readRunTaskText, markTaskCompleted, stopRun, archiveRun, renameRun, retryRun } from './orchestrator.js';
 import { startAutoScheduler } from './scheduler.js';
 
 const PUBLIC_DIR = path.join(APP_ROOT, 'public');
-const CODEX_INFO_TTL_MS = 30000;
+const AGENT_INFO_TTL_MS = 30000;
 const SERVER_CLOSE_FORCE_AFTER_MS = Number(process.env.KANBAN_SERVER_CLOSE_FORCE_AFTER_MS || 3000);
 const execFileAsync = promisify(execFile);
 let codexInfoCache = null;
+let piInfoCache = null;
 
 function send(res, status, body, type = 'application/json') {
   const data = type === 'application/json' ? JSON.stringify(body, null, 2) : body;
@@ -64,7 +65,14 @@ function methodNotAllowed(res) { send(res, 405, { error: 'method not allowed' })
 async function cachedCodexInfo(nowMs = Date.now()) {
   if (codexInfoCache && codexInfoCache.expiresAt > nowMs) return codexInfoCache.value;
   const value = await detectCodexInfo();
-  codexInfoCache = { value, expiresAt: nowMs + CODEX_INFO_TTL_MS };
+  codexInfoCache = { value, expiresAt: nowMs + AGENT_INFO_TTL_MS };
+  return value;
+}
+
+async function cachedPiInfo(nowMs = Date.now()) {
+  if (piInfoCache && piInfoCache.expiresAt > nowMs) return piInfoCache.value;
+  const value = await detectPiInfo();
+  piInfoCache = { value, expiresAt: nowMs + AGENT_INFO_TTL_MS };
   return value;
 }
 
@@ -236,10 +244,13 @@ async function handleApi(req, res, url, appClient) {
       } catch (error) {
         configError = error?.message || String(error);
       }
-      return send(res, 200, { ok: true, version: PACKAGE_VERSION, appRoot: APP_ROOT, runsDir: RUNS_DIR, defaultWorkspace: DEFAULT_WORKSPACE, defaultRepo: DEFAULT_REPO, runner, runnerEnvOverride: !!process.env.KANBAN_RUNNER, configError, codexBin: CODEX_BIN });
+      return send(res, 200, { ok: true, version: PACKAGE_VERSION, appRoot: APP_ROOT, runsDir: RUNS_DIR, defaultWorkspace: DEFAULT_WORKSPACE, defaultRepo: DEFAULT_REPO, runner, runnerEnvOverride: !!process.env.KANBAN_RUNNER, configError, codexBin: CODEX_BIN, piBin: PI_BIN });
     }
     if (req.method === 'GET' && url.pathname === '/api/codex') {
       return send(res, 200, { ok: true, codex: await cachedCodexInfo() });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/pi') {
+      return send(res, 200, { ok: true, pi: await cachedPiInfo() });
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       const config = await readLocalConfig();

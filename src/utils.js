@@ -21,6 +21,9 @@ export const RUNS_DIR = path.resolve(process.env.KANBAN_RUNS_DIR || path.join(pr
 export const CODEX_BIN = process.env.KANBAN_CODEX_BIN || 'codex';
 export const CODEX_NPM_PACKAGE = '@openai/codex';
 export const CODEX_CHECK_LATEST = process.env.KANBAN_CODEX_CHECK_LATEST === '1';
+export const PI_BIN = process.env.KANBAN_PI_BIN || 'pi';
+export const PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent';
+export const PI_CHECK_LATEST = process.env.KANBAN_PI_CHECK_LATEST === '1';
 
 export function normalizeRunner(value = 'headless', source = 'KANBAN_RUNNER') {
   const runner = String(value || '').trim();
@@ -59,7 +62,7 @@ export async function fileInfo(file) {
   catch { return { exists: false }; }
 }
 
-function parseCodexVersion(output) {
+function parseCliVersion(output) {
   const text = String(output || '').trim();
   const match = text.match(/(\d+\.\d+\.\d+)/);
   return match ? match[1] : text || null;
@@ -85,13 +88,49 @@ export async function detectCodexInfo(codexBin = CODEX_BIN, { checkLatest = CODE
     const text = String(stdout || '').trim();
     info.installed = true;
     info.versionText = text;
-    info.installedVersion = parseCodexVersion(text);
+    info.installedVersion = parseCliVersion(text);
   } catch (error) {
     info.installHint = error?.code === 'ENOENT' ? 'codex command not found' : (error?.message || String(error));
   }
   if (checkLatest) {
     try {
       const { stdout } = await execFileAsync('npm', ['view', CODEX_NPM_PACKAGE, 'version', '--json'], { timeout: 5000, windowsHide: true });
+      const parsed = JSON.parse(String(stdout || '').trim());
+      const latest = Array.isArray(parsed) ? parsed.at(-1) : parsed;
+      if (typeof latest === 'string' && latest.trim()) info.latestVersion = latest.trim();
+    } catch {}
+  }
+  info.updateAvailable = !!(info.installedVersion && info.latestVersion && info.installedVersion !== info.latestVersion);
+  return info;
+}
+
+export async function detectPiInfo(piBin = PI_BIN, { checkLatest = PI_CHECK_LATEST } = {}) {
+  const info = {
+    command: piBin,
+    packageName: PI_NPM_PACKAGE,
+    installCommand: `npm install -g --ignore-scripts ${PI_NPM_PACKAGE}`,
+    updateCommand: `npm install -g --ignore-scripts ${PI_NPM_PACKAGE}`,
+    installed: false,
+    installedVersion: null,
+    latestVersion: null,
+    updateAvailable: false,
+    versionText: '',
+    installHint: '',
+    latestCheckEnabled: !!checkLatest
+  };
+  try {
+    const { command, argsPrefix } = resolveCodexLauncher(piBin);
+    const { stdout } = await execFileAsync(command, [...argsPrefix, '--version'], { timeout: 5000, windowsHide: true });
+    const text = String(stdout || '').trim();
+    info.installed = true;
+    info.versionText = text;
+    info.installedVersion = parseCliVersion(text);
+  } catch (error) {
+    info.installHint = error?.code === 'ENOENT' ? 'pi command not found' : (error?.message || String(error));
+  }
+  if (checkLatest) {
+    try {
+      const { stdout } = await execFileAsync('npm', ['view', PI_NPM_PACKAGE, 'version', '--json'], { timeout: 5000, windowsHide: true });
       const parsed = JSON.parse(String(stdout || '').trim());
       const latest = Array.isArray(parsed) ? parsed.at(-1) : parsed;
       if (typeof latest === 'string' && latest.trim()) info.latestVersion = latest.trim();

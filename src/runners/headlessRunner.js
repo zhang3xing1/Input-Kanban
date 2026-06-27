@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
-import { CODEX_BIN } from '../utils.js';
-import { resolveCodexLauncher } from '../codexLauncher.js';
+import { createCodexExecutor } from '../agents/codexExecutor.js';
 
 function processKey(runId, taskId) {
   return `${runId}:${taskId}`;
@@ -38,20 +36,14 @@ function captureEventsWithTimestamps(stream, eventsFile, timedEventsFile) {
   });
 }
 
-export function createHeadlessRunner({ codexBin = CODEX_BIN } = {}) {
+export function createHeadlessRunner({ codexBin, agentExecutor = createCodexExecutor({ codexBin }) } = {}) {
   const runningProcesses = new Map();
 
-  function startCodexTask({ runId, taskId, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false }) {
-    const events = path.join(outDir, 'events.jsonl');
-    const timedEvents = path.join(outDir, 'events_timed.jsonl');
-    const stderr = path.join(outDir, 'stderr.log');
-    const last = path.join(outDir, 'last_message.md');
-    fs.writeFileSync(path.join(outDir, 'prompt.md'), prompt);
-    const args = ['exec', ...(skipGitRepoCheck ? ['--skip-git-repo-check'] : []), '--json', '--sandbox', sandbox, '-C', cwd, '-o', last, prompt];
-    const { command, argsPrefix } = resolveCodexLauncher(codexBin);
-    const child = spawn(command, [...argsPrefix, ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    captureEventsWithTimestamps(child.stdout, events, timedEvents);
-    child.stderr.pipe(fs.createWriteStream(stderr, { flags: 'a' }));
+  function startAgentTask({ runId, taskId, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false }) {
+    const prepared = agentExecutor.prepareHeadlessTask({ prompt, sandbox, cwd, outDir, skipGitRepoCheck });
+    const child = spawn(prepared.command, prepared.args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    captureEventsWithTimestamps(child.stdout, prepared.paths.events, prepared.paths.timedEvents);
+    child.stderr.pipe(fs.createWriteStream(prepared.paths.stderr, { flags: 'a' }));
     const key = processKey(runId, taskId);
     const listeners = [];
     let exited = false;
@@ -60,13 +52,13 @@ export function createHeadlessRunner({ codexBin = CODEX_BIN } = {}) {
       if (exited) return;
       exited = true;
       exitCode = code;
-      try { fs.writeFileSync(path.join(outDir, 'exit_code'), String(code)); } catch {}
+      try { fs.writeFileSync(prepared.paths.exitCode, String(code)); } catch {}
       runningProcesses.delete(key);
       for (const listener of listeners) listener(code);
     };
     runningProcesses.set(key, child);
     child.on('error', error => {
-      try { fs.appendFileSync(stderr, `${error.message || String(error)}\n`); } catch {}
+      try { fs.appendFileSync(prepared.paths.stderr, `${error.message || String(error)}\n`); } catch {}
       finish(error?.code === 'ENOENT' ? 127 : 1);
     });
     child.on('exit', code => finish(code));
@@ -93,7 +85,7 @@ export function createHeadlessRunner({ codexBin = CODEX_BIN } = {}) {
     return runningProcesses.has(processKey(runId, taskId));
   }
 
-  return { kind: 'headless', startCodexTask, stopRun, hasRunning };
+  return { kind: 'headless', startAgentTask, startCodexTask: startAgentTask, stopRun, hasRunning };
 }
 
 export const headlessRunner = createHeadlessRunner();

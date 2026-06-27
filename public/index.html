@@ -144,10 +144,10 @@
     .execution-summary + pre { border-top-left-radius: 0; border-top-right-radius: 0; }
     .notice { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #1f2937; color: #cbd5e1; }
     .notice.warning { border-color: #92400e; background: rgba(180,83,9,.18); }
-    .codex-status { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .codex-status { color: var(--muted); font-size: 12px; }
     .codex-status.warning { color: #fbbf24; }
     .codex-status code { color: #bfdbfe; }
-    .footer-actions { margin-top: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+    .footer-actions { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
     .environment-trigger { padding: 3px 8px; font-size: 12px; opacity: .72; }
     .environment-trigger:hover { opacity: 1; }
     .environment-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
@@ -180,7 +180,7 @@
     .modal-title-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
     .modal-close-btn { padding: 3px 9px; font-size: 18px; line-height: 1; opacity: .72; }
     .modal-close-btn:hover { opacity: 1; }
-    .page-footer { padding: 0 18px 18px; color: var(--muted); text-align: center; font-size: 12px; }
+    .page-footer { padding: 0 18px 18px; color: var(--muted); text-align: center; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
     .session-management-trigger { padding: 3px 8px; font-size: 12px; opacity: .72; }
     .session-management-trigger:hover { opacity: 1; }
     .session-management-tabs { display: flex; gap: 6px; margin: 8px 0 4px; flex-wrap: wrap; align-items: center; }
@@ -286,7 +286,7 @@
     </section>
   </div>
 </main>
-<footer class="page-footer"><div id="pageFooter">版本：-</div><div id="codexStatus" class="codex-status hidden"></div><div class="footer-actions"><button id="environmentTrigger" class="secondary environment-trigger" onclick="openEnvironmentModal()">环境</button><button id="sessionManagementTrigger" class="secondary session-management-trigger" onclick="openSessionManagement()">会话管理</button></div></footer>
+<footer class="page-footer"><div id="pageFooter">版本：-</div><div id="codexStatus" class="codex-status hidden"></div><div id="piStatus" class="codex-status hidden"></div><div class="footer-actions"><button id="environmentTrigger" class="secondary environment-trigger" onclick="openEnvironmentModal()">环境</button><button id="sessionManagementTrigger" class="secondary session-management-trigger" onclick="openSessionManagement()">会话管理</button></div></footer>
 <div id="environmentModal" class="modal-backdrop hidden" onclick="closeEnvironmentModal(event)">
   <div class="modal-card" onclick="event.stopPropagation()">
     <div class="modal-title-row">
@@ -533,6 +533,25 @@ async function loadCodexStatus() {
     el.classList.remove('hidden');
     el.classList.add('warning');
     el.innerHTML = `Codex:检测失败|${esc(errorDetail(error))}`;
+  }
+}
+async function loadPiStatus() {
+  const el = document.getElementById('piStatus');
+  if (!el) return;
+  try {
+    const data = await api('/api/pi');
+    const pi = data.pi || {};
+    el.classList.remove('hidden', 'warning');
+    if (!pi.installed) {
+      el.classList.add('warning');
+      el.innerHTML = `Pi 未安装|<code>${esc(pi.installCommand || 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent')}</code>`;
+    } else {
+      el.innerHTML = `Pi <code>${esc(pi.versionText || pi.installedVersion || 'pi')}</code>`;
+    }
+  } catch (error) {
+    el.classList.remove('hidden');
+    el.classList.add('warning');
+    el.innerHTML = `Pi:检测失败|${esc(errorDetail(error))}`;
   }
 }
 function renderRunnerControls() {
@@ -1732,6 +1751,7 @@ initializeWorkerSandboxPreference();
 initSessionManagementResize();
 renderActionToolbar();
 loadCodexStatus().catch(console.error);
+loadPiStatus().catch(console.error);
 loadAppConfig().catch(console.error);
 loadHealth().then(refreshRuns);
 setInterval(() => { if (selectedRun) refreshSelected({auto:true}).catch(console.error); else refreshRuns().catch(console.error); }, AUTO_REFRESH_MS);

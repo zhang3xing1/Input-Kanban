@@ -64,7 +64,7 @@ function createFrontendHarness() {
   context.workerSandbox.value = 'workspace-write';
   context.taskText.value = 'noop';
   const bootScript = script
-    .replace(/\r?\ninitializeWorkerSandboxPreference\(\);\r?\ninitSessionManagementResize\(\);\r?\nrenderActionToolbar\(\);\r?\nloadCodexStatus\(\)\.catch\(console\.error\);\r?\nloadAppConfig\(\)\.catch\(console\.error\);\r?\nloadHealth\(\)\.then\(refreshRuns\);\r?\nsetInterval\(\(\) => \{ if \(selectedRun\) refreshSelected\(\{auto:true\}\)\.catch\(console\.error\); else refreshRuns\(\)\.catch\(console\.error\); \}, AUTO_REFRESH_MS\);\s*$/, '');
+    .replace(/\r?\ninitializeWorkerSandboxPreference\(\);\r?\ninitSessionManagementResize\(\);\r?\nrenderActionToolbar\(\);\r?\nloadCodexStatus\(\)\.catch\(console\.error\);\r?\nloadPiStatus\(\)\.catch\(console\.error\);\r?\nloadAppConfig\(\)\.catch\(console\.error\);\r?\nloadHealth\(\)\.then\(refreshRuns\);\r?\nsetInterval\(\(\) => \{ if \(selectedRun\) refreshSelected\(\{auto:true\}\)\.catch\(console\.error\); else refreshRuns\(\)\.catch\(console\.error\); \}, AUTO_REFRESH_MS\);\s*$/, '');
   vm.runInNewContext(`${bootScript}
 api = async (requestPath, opts = {}) => { calls.push({ kind: 'api', path: requestPath, opts }); return {}; };
 refreshSelected = async () => { calls.push({ kind: 'refreshSelected' }); };
@@ -90,7 +90,7 @@ test('header, browser tab, and footer show Input Kanban identity', () => {
   assert.match(html, /<link rel="mask-icon" href="\/assets\/input-kanban-mask-icon\.svg" color="#2563eb" \/>/);
   assert.match(html, /<link rel="apple-touch-icon" sizes="180x180" href="\/assets\/input-kanban-apple-touch-icon\.png\?v=2" \/>/);
   assert.match(html, /<h1 class="brand"><img class="brand-icon" src="\/assets\/input-kanban-icon\.png"/);
-  assert.match(html, /<footer class="page-footer"><div id="pageFooter">版本：-<\/div><div id="codexStatus" class="codex-status hidden"><\/div><div class="footer-actions"><button id="environmentTrigger" class="secondary environment-trigger" onclick="openEnvironmentModal\(\)">环境<\/button><button id="sessionManagementTrigger" class="secondary session-management-trigger" onclick="openSessionManagement\(\)">会话管理<\/button><\/div><\/footer>/);
+  assert.match(html, /<footer class="page-footer"><div id="pageFooter">版本：-<\/div><div id="codexStatus" class="codex-status hidden"><\/div><div id="piStatus" class="codex-status hidden"><\/div><div class="footer-actions"><button id="environmentTrigger" class="secondary environment-trigger" onclick="openEnvironmentModal\(\)">环境<\/button><button id="sessionManagementTrigger" class="secondary session-management-trigger" onclick="openSessionManagement\(\)">会话管理<\/button><\/div><\/footer>/);
   assert.match(script, /sessionManagementThreadTitle/);
   assert.match(script, /sessionManagementShortId/);
   assert.match(script, /sessionManagementTab = 'board'/);
@@ -134,15 +134,21 @@ test('sidebar header keeps a compact create action', () => {
   assert.doesNotMatch(html, /<button onclick="showCreateForm\(\)">新建任务批次<\/button>/);
 });
 
-test('footer exposes codex backend status and create form exposes worker sandbox selector', () => {
+test('footer exposes codex and pi backend status and create form exposes worker sandbox selector', () => {
   assert.match(html, /id="codexStatus"/);
+  assert.match(html, /id="piStatus"/);
   assert.match(html, /\.codex-status/);
   assert.match(script, /async function loadCodexStatus\(\)/);
   assert.match(script, /api\('\/api\/codex'\)/);
   assert.match(script, /Codex 未安装/);
   assert.match(script, /npm install -g @openai\/codex/);
+  assert.match(script, /async function loadPiStatus\(\)/);
+  assert.match(script, /api\('\/api\/pi'\)/);
+  assert.match(script, /Pi 未安装/);
+  assert.match(script, /npm install -g --ignore-scripts @earendil-works\/pi-coding-agent/);
   assert.doesNotMatch(script, /Codex 可更新/);
   assert.match(script, /codex\.versionText \|\| codex\.installedVersion \|\| 'codex'/);
+  assert.match(script, /pi\.versionText \|\| pi\.installedVersion \|\| 'pi'/);
   assert.doesNotMatch(script, /后端命令 <code>/);
   assert.match(html, /<select id="workerSandbox">/);
   assert.match(html, /id="codexSkipGitRepoCheck" type="checkbox" checked/);

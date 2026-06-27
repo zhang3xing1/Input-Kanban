@@ -7,12 +7,12 @@ This document explains how Input Kanban is implemented so that humans and coding
 Implementation status:
 
 ```text
-mvp / batch-scheduler / codex-exec-primary / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap
+mvp / batch-scheduler / codex-exec-primary / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap / agent-guide / prepare-skill / runner-config / session-management / compact-attention-ui
 ```
 
 Recent validation:
 
-- `npm run check` passes for the CLI entry and backend modules.
+- `npm run check` passes for the CLI entry, backend modules, and test suite. The current v0.0.25 checkout passes with 127 tests.
 - A smoke test can start `input-kanban` on a temporary port and read `GET /api/health`.
 - The frontend is a single HTML file; its inline script can be extracted and checked with `node --check` when edited.
 
@@ -51,7 +51,7 @@ The npm CLI entry is:
 bin/input-kanban.js
 ```
 
-It parses CLI options and sets environment variables before importing backend modules. Without a subcommand, or with `serve`, it starts the HTTP server. With `submit`, it creates a run directly in the shared runs directory and can optionally run an auto loop.
+It parses CLI options and sets environment variables before importing backend modules. Without a subcommand, or with `serve`, it starts the HTTP server. With `submit`, it creates a run directly in the shared runs directory and can optionally run an auto loop. Additional subcommands expose agent-friendly status/result/retry/stop flows, a usage guide, bundled skill installation, and tmux dependency checks.
 
 Supported serve options:
 
@@ -66,6 +66,20 @@ Supported serve options:
 --open
 --no-open
 ```
+
+Supported runs options:
+
+```text
+--runs-dir <path>
+--workspace <path>
+--repo <path>
+--active
+--include-archived
+--limit <n>
+--json
+```
+
+`input-kanban runs` lists visible run summaries from the shared runs directory. `--active` filters to runs that still need attention or can continue advancing. `--workspace` filters by target workspace.
 
 Supported status options:
 
@@ -121,6 +135,7 @@ Supported submit options:
 --task-file <path|->
 --max-parallel <n>
 --worker-sandbox <read-only|workspace-write|danger-full-access>
+--codex-skip-git-repo-check
 --plan-approval
 --runner <headless|tmux>
 --runs-dir <path>
@@ -131,7 +146,18 @@ Supported submit options:
 --poll-ms <ms>
 ```
 
-`input-kanban submit` creates a run and starts the planner. Task content can come from `--task <text>` or `--task-file <path|->`; omitting `--workspace` uses the current working directory as the target workspace, and `--repo` remains a compatibility alias. Omitting `--label` derives the run label from the first non-empty task line. Auto mode is the default for submit: it keeps polling the run through the shared orchestrator auto-advance path, dispatches batches when the plan is ready, and starts the final judge once all batches complete. `--plan-approval` adds a durable Planner → Worker gate: auto advances through planning, then pauses at the completed plan until the user confirms it from the Web dashboard by clicking `开始执行`. `--no-auto` keeps submit to create + plan only for the current CLI process, but a running Web server scheduler can still advance the run unless a durable gate such as `--plan-approval` is configured. `-d` / `--detach` starts a background supervisor process for the same auto loop and lets the submitting terminal return immediately. The Web server also starts a lightweight scheduler that uses this shared path, so serial batch advancement does not depend on an open browser tab. The submit output includes `input-kanban status <runId> --watch` for terminal-side observation. Because it writes to the same runs directory as the Web server, CLI-created runs are visible in the 8787 dashboard when both processes use the same `--runs-dir`.
+`input-kanban submit` creates a run and starts the planner. Task content can come from `--task <text>` or `--task-file <path|->`; omitting `--workspace` uses the current working directory as the target workspace, and `--repo` remains a compatibility alias. Omitting `--label` derives the run label from the first non-empty task line. Auto mode is the default for submit: it keeps polling the run through the shared orchestrator auto-advance path, dispatches batches when the plan is ready, and starts the final judge once all batches complete. `--codex-skip-git-repo-check` passes Codex `--skip-git-repo-check` through planner, worker, and judge executions for trusted umbrella or non-Git workspaces. `--plan-approval` adds a durable Planner → Worker gate: auto advances through planning, then pauses at the completed plan until the user confirms it from the Web dashboard by clicking `开始执行`. `--no-auto` keeps submit to create + plan only for the current CLI process, but a running Web server scheduler can still advance the run unless a durable gate such as `--plan-approval` is configured. `-d` / `--detach` starts a background supervisor process for the same auto loop and lets the submitting terminal return immediately. The Web server also starts a lightweight scheduler that uses this shared path, so serial batch advancement does not depend on an open browser tab. The submit output includes `input-kanban status <runId> --watch` for terminal-side observation. Because it writes to the same runs directory as the Web server, CLI-created runs are visible in the 8787 dashboard when both processes use the same `--runs-dir`.
+
+Supported guide / skill / dependency commands:
+
+```text
+input-kanban guide [--json]
+input-kanban install-skill codex [--target-dir <path>] [--force] [--dry-run] [--json]
+input-kanban deps tmux [--json]
+input-kanban deps install tmux [--dry-run] [--yes] [--json]
+```
+
+`guide` prints an agent-oriented control loop, decision rules, and copyable templates. `install-skill codex` installs the bundled `input-kanban-prepare` skill, which helps external Agent conversations produce structured `task.md` handoffs. `deps tmux` checks tmux availability; `deps install tmux` prints or runs a platform-specific install plan with explicit confirmation unless `--yes` is passed.
 
 Default behavior:
 
@@ -221,6 +247,7 @@ Common run states:
 - `judged`: final judge process completed.
 - `judge_failed`: final judge process failed.
 - `stopped`: user stopped the run; no further scheduling occurs.
+- `load_failed`: summary-only status used when an existing run directory cannot be normalized; it keeps corrupted or incompatible runs visible instead of silently hiding them.
 
 ## Planner Retry Policy
 
@@ -394,6 +421,7 @@ Current behavior:
 - The execution view shows event counts and a jump-to-bottom button.
 - `last_message.md` has a hover copy button in the top-left of the text area.
 - `judge_input.json` and `verdict.json` are shown for the judge role. `exit_code` is not a default file tab because the task table already shows exit codes.
+- Runtime attention hints for workers are shown as compact task-row bubbles. The popover can include nearby log context and, when a Codex session id is available, a `codex resume <sessionId>` copy action for manual intervention.
 
 ## Files and Responsibilities
 
@@ -401,9 +429,14 @@ Current behavior:
 bin/input-kanban.js       CLI entry; parses args and starts server
 src/server.js             HTTP server, static files, API routes
 src/orchestrator.js       run state machine, scheduling, codex exec, stop/archive, file formatting
+src/agents/codexExecutor.js Codex command/script executor adapter used by runners
 src/appServerClient.js    Codex App Server stdio client and session lookup
+src/config.js             local Input Kanban config, including default runner
+src/deps.js               dependency detection/install plans, currently tmux
+src/status.js             run status classification helpers
 src/utils.js              paths, IDs, atomic JSON writes, file info, JSON extraction
 public/index.html         single-file frontend, no build step
+skills/input-kanban-prepare/SKILL.md bundled prepare skill for structured handoffs
 README.md                 user-facing overview
 docs/PROJECT_GUIDE.md     implementation guide for humans and agents
 ENVIRONMENT.md            runtime environment variable reference
@@ -429,6 +462,13 @@ runs/<runId>/judge/verdict.json
 
 - `GET /`
 - `GET /api/health`
+- `GET /api/codex`
+- `GET /api/pi`
+- `GET /api/config`
+- `PATCH /api/config`
+- `GET /api/tmux`
+- `GET /api/session-management`
+- `GET /api/session-management/processes`
 - `GET /api/runs`
 - `GET /api/runs?includeArchived=1`
 - `POST /api/runs`

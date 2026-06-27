@@ -4,6 +4,21 @@
 
 - No unreleased changes yet.
 
+## v0.0.25
+
+### Highlights
+
+- Refactor task execution behind a Codex executor adapter without changing runtime behavior, so headless/tmux runners call `startAgentTask()` while preserving the existing `startCodexTask` compatibility alias.
+- Move Codex command construction, task artifact paths, and tmux `run.sh` generation into `src/agents/codexExecutor.js` as preparation for future agent backends.
+- Add backend-visible Pi Coding Agent command monitoring via `KANBAN_PI_BIN`, `GET /api/pi`, and short cached `pi --version` detection.
+- Show the detected Pi version in the dashboard footer next to the existing Codex status, with a horizontal footer layout and an install hint when `pi` is unavailable.
+- Document the Pi detection environment variables and keep the current task execution path Codex-only.
+
+### Verification
+
+- `npm run check` passed locally with 127 tests.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` in a temporary Windows release-candidate directory.
+
 ## v0.0.24
 
 ### Highlights
