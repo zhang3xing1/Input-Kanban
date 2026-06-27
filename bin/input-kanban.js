@@ -217,7 +217,7 @@ function parseSubmitArgs(argv) {
   const args = {
     host: '127.0.0.1', port: 8787, workspace: undefined, repo: undefined, runsDir: undefined, codexBin: undefined,
     runner: undefined, label: undefined, taskText: undefined, taskFile: undefined, maxParallel: 3,
-    workerSandbox: 'workspace-write', codexSkipGitRepoCheck: false, planApproval: false, auto: true, detach: false, watch: true, json: false, pollMs: 3000, maxRetries: 1, help: false
+    workerSandbox: 'workspace-write', workerBackend: undefined, codexSkipGitRepoCheck: false, planApproval: false, auto: true, detach: false, watch: true, json: false, pollMs: 3000, maxRetries: 1, help: false
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -236,6 +236,7 @@ function parseSubmitArgs(argv) {
     else if (arg === '--task-file') args.taskFile = next();
     else if (arg === '--max-parallel') args.maxParallel = Number(next());
     else if (arg === '--worker-sandbox') args.workerSandbox = validateSandbox(next(), '--worker-sandbox');
+    else if (arg === '--worker-backend') args.workerBackend = validateChoice(next(), '--worker-backend', ['codex', 'pi']);
     else if (arg === '--codex-skip-git-repo-check') args.codexSkipGitRepoCheck = true;
     else if (arg === '--plan-approval') args.planApproval = true;
     else if (arg === '--auto') { args.auto = true; args.watch = true; }
@@ -267,6 +268,7 @@ function applyRuntimeEnv(args) {
 
 function applyRunnerEnv(args) {
   if (args.runner) process.env.KANBAN_RUNNER = args.runner;
+  if (args.workerBackend) process.env.KANBAN_WORKER_BACKEND = args.workerBackend;
 }
 
 function printJson(value) {
@@ -363,6 +365,7 @@ Submit options:
   --task-file <path>         Read task description from file, use - for stdin
   --max-parallel <n>         Default max parallel workers, default 3
   --worker-sandbox <mode>    read-only, workspace-write, or danger-full-access
+  --worker-backend <backend> codex or pi; default codex
   --codex-skip-git-repo-check
                                Pass --skip-git-repo-check to Codex exec for umbrella/non-Git workspaces
   --plan-approval            Pause after planning until the generated plan is confirmed
@@ -394,6 +397,7 @@ Options:
   --task-file <path>         Read task description from file, use - for stdin
   --max-parallel <n>         Default max parallel workers, default 3
   --worker-sandbox <mode>    read-only, workspace-write, or danger-full-access
+  --worker-backend <backend> codex or pi; default codex
   --codex-skip-git-repo-check
                                Pass --skip-git-repo-check to Codex exec for umbrella/non-Git workspaces
   --plan-approval            Pause after planning until the generated plan is confirmed
@@ -1054,6 +1058,7 @@ async function submit(args) {
     repo: process.env.KANBAN_DEFAULT_REPO,
     maxParallel: args.maxParallel,
     workerSandbox: args.workerSandbox,
+    workerBackend: args.workerBackend,
     codexSkipGitRepoCheck: args.codexSkipGitRepoCheck,
     planApproval: args.planApproval,
     runner: args.runner

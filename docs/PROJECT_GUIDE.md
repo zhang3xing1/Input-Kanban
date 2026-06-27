@@ -7,12 +7,12 @@ This document explains how Input Kanban is implemented so that humans and coding
 Implementation status:
 
 ```text
-mvp / batch-scheduler / codex-exec-primary / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap / agent-guide / prepare-skill / runner-config / session-management / compact-attention-ui
+mvp / batch-scheduler / codex-exec-primary / pi-worker-backend / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap / agent-guide / prepare-skill / runner-config / session-management / compact-attention-ui
 ```
 
 Recent validation:
 
-- `npm run check` passes for the CLI entry, backend modules, and test suite. The current v0.0.25 checkout passes with 127 tests.
+- `npm run check` passes for the CLI entry, backend modules, and test suite. The current v0.0.26 checkout passes with 129 tests locally and on Windows after installing `pi` 0.80.2.
 - A smoke test can start `input-kanban` on a temporary port and read `GET /api/health`.
 - The frontend is a single HTML file; its inline script can be extracted and checked with `node --check` when edited.
 
@@ -20,7 +20,7 @@ Recent validation:
 
 Input Kanban is a local Codex orchestration dashboard. It is not a business service and not a CI system.
 
-It runs local `codex exec --json` processes, stores run state and logs on the filesystem, and serves a static HTML dashboard that polls the backend.
+It primarily runs local `codex exec --json` processes, can optionally run headless workers through `pi --mode json`, stores run state and logs on the filesystem, and serves a static HTML dashboard that polls the backend.
 
 The intended use case is:
 
@@ -41,6 +41,7 @@ The intended use case is:
 - tmux windows stay open after command completion for human inspection, but `exit_code` is written before the keep-open shell starts so state can advance without closing the window.
 - Dashboard tmux attach copy actions are shown only after tmux metadata is present. The file viewer does not repeat tmux terminal details.
 - `codex exec` is treated as non-interactive; tmux mode provides live terminal visibility, not an approval UI.
+- The optional `pi` backend currently applies only to headless worker tasks. Planner and final judge tasks remain Codex exec backed, and tmux tasks remain Codex backed.
 - There is no batch-level judge. Only one final judge pass runs after all batches complete.
 
 ## CLI Entry
@@ -135,6 +136,7 @@ Supported submit options:
 --task-file <path|->
 --max-parallel <n>
 --worker-sandbox <read-only|workspace-write|danger-full-access>
+--worker-backend <codex|pi>
 --codex-skip-git-repo-check
 --plan-approval
 --runner <headless|tmux>
@@ -146,7 +148,7 @@ Supported submit options:
 --poll-ms <ms>
 ```
 
-`input-kanban submit` creates a run and starts the planner. Task content can come from `--task <text>` or `--task-file <path|->`; omitting `--workspace` uses the current working directory as the target workspace, and `--repo` remains a compatibility alias. Omitting `--label` derives the run label from the first non-empty task line. Auto mode is the default for submit: it keeps polling the run through the shared orchestrator auto-advance path, dispatches batches when the plan is ready, and starts the final judge once all batches complete. `--codex-skip-git-repo-check` passes Codex `--skip-git-repo-check` through planner, worker, and judge executions for trusted umbrella or non-Git workspaces. `--plan-approval` adds a durable Planner → Worker gate: auto advances through planning, then pauses at the completed plan until the user confirms it from the Web dashboard by clicking `开始执行`. `--no-auto` keeps submit to create + plan only for the current CLI process, but a running Web server scheduler can still advance the run unless a durable gate such as `--plan-approval` is configured. `-d` / `--detach` starts a background supervisor process for the same auto loop and lets the submitting terminal return immediately. The Web server also starts a lightweight scheduler that uses this shared path, so serial batch advancement does not depend on an open browser tab. The submit output includes `input-kanban status <runId> --watch` for terminal-side observation. Because it writes to the same runs directory as the Web server, CLI-created runs are visible in the 8787 dashboard when both processes use the same `--runs-dir`.
+`input-kanban submit` creates a run and starts the planner. Task content can come from `--task <text>` or `--task-file <path|->`; omitting `--workspace` uses the current working directory as the target workspace, and `--repo` remains a compatibility alias. Omitting `--label` derives the run label from the first non-empty task line. Auto mode is the default for submit: it keeps polling the run through the shared orchestrator auto-advance path, dispatches batches when the plan is ready, and starts the final judge once all batches complete. `--worker-backend pi` switches headless worker tasks to Pi Coding Agent while keeping planner and final judge on Codex exec; the default is `codex`. `--codex-skip-git-repo-check` passes Codex `--skip-git-repo-check` through planner, worker, and judge executions for trusted umbrella or non-Git workspaces. `--plan-approval` adds a durable Planner → Worker gate: auto advances through planning, then pauses at the completed plan until the user confirms it from the Web dashboard by clicking `开始执行`. `--no-auto` keeps submit to create + plan only for the current CLI process, but a running Web server scheduler can still advance the run unless a durable gate such as `--plan-approval` is configured. `-d` / `--detach` starts a background supervisor process for the same auto loop and lets the submitting terminal return immediately. The Web server also starts a lightweight scheduler that uses this shared path, so serial batch advancement does not depend on an open browser tab. The submit output includes `input-kanban status <runId> --watch` for terminal-side observation. Because it writes to the same runs directory as the Web server, CLI-created runs are visible in the 8787 dashboard when both processes use the same `--runs-dir`.
 
 Supported guide / skill / dependency commands:
 

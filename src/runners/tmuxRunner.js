@@ -176,5 +176,5 @@ export function createTmuxRunner({
     return runningWindows.has(processKey(runId, taskId));
   }
 
-  return { kind: 'tmux', sessionNameForRun, startAgentTask, startCodexTask: startAgentTask, stopRun, hasRunning };
+  return { kind: 'tmux', startAgentTask, startCodexTask: startAgentTask, stopRun, hasRunning };
 }

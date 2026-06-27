@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 const { version: PACKAGE_VERSION } = require('../package.json');
 export const VALID_RUNNERS = ['headless', 'tmux'];
+export const VALID_WORKER_BACKENDS = ['codex', 'pi'];
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export { PACKAGE_VERSION };
@@ -24,12 +25,24 @@ export const CODEX_CHECK_LATEST = process.env.KANBAN_CODEX_CHECK_LATEST === '1';
 export const PI_BIN = process.env.KANBAN_PI_BIN || 'pi';
 export const PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent';
 export const PI_CHECK_LATEST = process.env.KANBAN_PI_CHECK_LATEST === '1';
+export function currentWorkerBackend() {
+  return process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex';
+}
 
 export function normalizeRunner(value = 'headless', source = 'KANBAN_RUNNER') {
   const runner = String(value || '').trim();
   if (VALID_RUNNERS.includes(runner)) return runner;
   const error = new Error(`invalid ${source}: ${value}; expected one of: ${VALID_RUNNERS.join(', ')}`);
   error.code = 'INVALID_RUNNER';
+  error.source = source;
+  throw error;
+}
+
+export function normalizeWorkerBackend(value = currentWorkerBackend(), source = 'KANBAN_WORKER_BACKEND') {
+  const backend = String(value || '').trim();
+  if (VALID_WORKER_BACKENDS.includes(backend)) return backend;
+  const error = new Error(`invalid ${source}: ${value}; expected one of: ${VALID_WORKER_BACKENDS.join(', ')}`);
+  error.code = 'INVALID_WORKER_BACKEND';
   error.source = source;
   throw error;
 }

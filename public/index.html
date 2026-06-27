@@ -246,7 +246,11 @@
         <option value="read-only">read-only（只读）</option>
         <option value="danger-full-access">danger-full-access（高风险，跳过沙箱限制）</option>
       </select>
-      <div class="muted">仅影响 worker；任务拆分和汇总验收仍保持 read-only。若执行过程提示 Permission denied / sandbox denied，这通常不是任务本身失败，而是当前沙箱能力不足；在可信工作区可改用 danger-full-access。DNS / 网络失败则通常需要检查代理、VPN 或本地 evidence。</div>
+      <label>Worker 后端</label><select id="workerBackend">
+        <option value="codex" selected>Codex exec</option>
+        <option value="pi">Pi Coding Agent</option>
+      </select>
+      <div class="muted">仅影响 worker；任务拆分和汇总验收仍保持 Codex exec。若执行过程提示 Permission denied / sandbox denied，这通常不是任务本身失败，而是当前沙箱能力不足；在可信工作区可改用 danger-full-access。DNS / 网络失败则通常需要检查代理、VPN 或本地 evidence。</div>
       <label><input id="codexSkipGitRepoCheck" type="checkbox" checked style="width:auto; margin-right:6px;" />跳过 Codex Git/信任目录检查</label>
       <div class="muted">仅在可信 umbrella / 非 Git 工作区使用；会给 planner、worker 和 judge 的 Codex exec 传入 --skip-git-repo-check。</div>
       <label><input id="planApproval" type="checkbox" style="width:auto; margin-right:6px;" />计划生成后手动确认后执行</label>
@@ -377,7 +381,9 @@ const AUTO_REFRESH_MS = 3000;
 const RUN_LIST_PAGE_SIZE = 10;
 const WORKSPACE_FILTER_ALL = '';
 const WORKER_SANDBOX_STORAGE_KEY = 'input-kanban.workerSandbox';
+const WORKER_BACKEND_STORAGE_KEY = 'input-kanban.workerBackend';
 const VALID_WORKER_SANDBOXES = new Set(['read-only', 'workspace-write', 'danger-full-access']);
+const VALID_WORKER_BACKENDS = new Set(['codex', 'pi']);
 let currentWorkspacePath = '';
 let selectedWorkspaceFilter = localStorage.getItem('input-kanban.workspaceFilter') || WORKSPACE_FILTER_ALL;
 let appConfigState = { effectiveRunner: 'headless', runnerEnvOverride: false, defaultRunner: 'headless', loaded: false };
@@ -798,11 +804,23 @@ function initializeWorkerSandboxPreference() {
   if (VALID_WORKER_SANDBOXES.has(saved)) select.value = saved;
   select.addEventListener('change', saveWorkerSandboxPreference);
 }
+function saveWorkerBackendPreference() {
+  const select = document.getElementById('workerBackend');
+  const value = select?.value || '';
+  if (VALID_WORKER_BACKENDS.has(value)) localStorage.setItem(WORKER_BACKEND_STORAGE_KEY, value);
+}
+function initializeWorkerBackendPreference() {
+  const select = document.getElementById('workerBackend');
+  if (!select) return;
+  const saved = localStorage.getItem(WORKER_BACKEND_STORAGE_KEY);
+  if (VALID_WORKER_BACKENDS.has(saved)) select.value = saved;
+  select.addEventListener('change', saveWorkerBackendPreference);
+}
 async function createRun() {
   saveWorkerSandboxPreference();
   if (!await ensureRunnerSelectionReady()) return;
   if (!await ensureTmuxForCreate()) return;
-  const body = { label: label.value, workspace: repo.value, repo: repo.value, maxParallel: maxParallel.value, workerSandbox: workerSandbox.value, codexSkipGitRepoCheck: !!document.getElementById('codexSkipGitRepoCheck')?.checked, planApproval: planApproval.checked, taskText: taskText.value, runner: selectedRunnerMode() };
+  const body = { label: label.value, workspace: repo.value, repo: repo.value, maxParallel: maxParallel.value, workerSandbox: workerSandbox.value, workerBackend: workerBackend.value, codexSkipGitRepoCheck: !!document.getElementById('codexSkipGitRepoCheck')?.checked, planApproval: planApproval.checked, taskText: taskText.value, runner: selectedRunnerMode() };
   const r = await api('/api/runs', { method: 'POST', body: JSON.stringify(body) });
   selectedRun = r.runId; selectedTask = null; selectedFileName = null;
   clearFileView();
@@ -1748,6 +1766,7 @@ async function submitManualComplete() {
 }
 
 initializeWorkerSandboxPreference();
+initializeWorkerBackendPreference();
 initSessionManagementResize();
 renderActionToolbar();
 loadCodexStatus().catch(console.error);

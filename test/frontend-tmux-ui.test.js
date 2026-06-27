@@ -35,7 +35,7 @@ function createFrontendHarness() {
     }
     return elements.get(id);
   };
-  const globalElementIds = ['label', 'repo', 'runsDir', 'runnerMode', 'maxParallel', 'workerSandbox', 'planApproval', 'taskText', 'tmuxDependencyModal', 'showTmuxInstallCommandBtn', 'copyTmuxDependencyCommandBtn'];
+  const globalElementIds = ['label', 'repo', 'runsDir', 'runnerMode', 'maxParallel', 'workerSandbox', 'workerBackend', 'planApproval', 'taskText', 'tmuxDependencyModal', 'showTmuxInstallCommandBtn', 'copyTmuxDependencyCommandBtn'];
   const context = {
     console: { error() {} },
     localStorage: { getItem() { return ''; }, setItem() {} },
@@ -62,9 +62,10 @@ function createFrontendHarness() {
   context.runnerMode.value = 'default';
   context.maxParallel.value = '3';
   context.workerSandbox.value = 'workspace-write';
+  context.workerBackend.value = 'codex';
   context.taskText.value = 'noop';
   const bootScript = script
-    .replace(/\r?\ninitializeWorkerSandboxPreference\(\);\r?\ninitSessionManagementResize\(\);\r?\nrenderActionToolbar\(\);\r?\nloadCodexStatus\(\)\.catch\(console\.error\);\r?\nloadPiStatus\(\)\.catch\(console\.error\);\r?\nloadAppConfig\(\)\.catch\(console\.error\);\r?\nloadHealth\(\)\.then\(refreshRuns\);\r?\nsetInterval\(\(\) => \{ if \(selectedRun\) refreshSelected\(\{auto:true\}\)\.catch\(console\.error\); else refreshRuns\(\)\.catch\(console\.error\); \}, AUTO_REFRESH_MS\);\s*$/, '');
+    .replace(/\r?\ninitializeWorkerSandboxPreference\(\);\r?\ninitializeWorkerBackendPreference\(\);\r?\ninitSessionManagementResize\(\);\r?\nrenderActionToolbar\(\);\r?\nloadCodexStatus\(\)\.catch\(console\.error\);\r?\nloadPiStatus\(\)\.catch\(console\.error\);\r?\nloadAppConfig\(\)\.catch\(console\.error\);\r?\nloadHealth\(\)\.then\(refreshRuns\);\r?\nsetInterval\(\(\) => \{ if \(selectedRun\) refreshSelected\(\{auto:true\}\)\.catch\(console\.error\); else refreshRuns\(\)\.catch\(console\.error\); \}, AUTO_REFRESH_MS\);\s*$/, '');
   vm.runInNewContext(`${bootScript}
 api = async (requestPath, opts = {}) => { calls.push({ kind: 'api', path: requestPath, opts }); return {}; };
 refreshSelected = async () => { calls.push({ kind: 'refreshSelected' }); };
@@ -151,6 +152,7 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.match(script, /pi\.versionText \|\| pi\.installedVersion \|\| 'pi'/);
   assert.doesNotMatch(script, /后端命令 <code>/);
   assert.match(html, /<select id="workerSandbox">/);
+  assert.match(html, /<select id="workerBackend">/);
   assert.match(html, /id="codexSkipGitRepoCheck" type="checkbox" checked/);
   assert.match(html, /<select id="runnerMode">/);
   assert.match(html, /<option value="default" selected>跟随默认<\/option>/);
@@ -192,6 +194,7 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.match(html, /这通常不是任务本身失败，而是当前沙箱能力不足/);
   assert.match(html, /DNS \/ 网络失败则通常需要检查代理、VPN 或本地 evidence/);
   assert.match(script, /workerSandbox: workerSandbox\.value/);
+  assert.match(script, /workerBackend: workerBackend\.value/);
   assert.match(script, /codexSkipGitRepoCheck: !!document\.getElementById\('codexSkipGitRepoCheck'\)\?\.checked/);
   assert.match(script, /planApproval: planApproval\.checked/);
   assert.match(script, /function planApprovalPending\(state = currentState\)/);
@@ -199,6 +202,10 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.match(script, /已拆分，待确认/);
   assert.match(script, /开始执行/);
   assert.match(script, /const WORKER_SANDBOX_STORAGE_KEY = 'input-kanban\.workerSandbox'/);
+  assert.match(script, /const WORKER_BACKEND_STORAGE_KEY = 'input-kanban\.workerBackend'/);
+  assert.match(script, /const VALID_WORKER_BACKENDS = new Set\(\['codex', 'pi'\]\)/);
+  assert.match(script, /function initializeWorkerBackendPreference\(\)/);
+  assert.match(script, /initializeWorkerBackendPreference\(\);/);
   assert.match(script, /const VALID_WORKER_SANDBOXES = new Set\(\['read-only', 'workspace-write', 'danger-full-access'\]\)/);
   assert.match(script, /跳过 Git 检查/);
   assert.match(script, /function initializeWorkerSandboxPreference\(\)/);

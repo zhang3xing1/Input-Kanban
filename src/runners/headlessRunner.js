@@ -1,12 +1,20 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createCodexExecutor } from '../agents/codexExecutor.js';
+import { createPiExecutor } from '../agents/piExecutor.js';
+import { normalizeWorkerBackend } from '../utils.js';
 
 function processKey(runId, taskId) {
   return `${runId}:${taskId}`;
 }
 
-function captureEventsWithTimestamps(stream, eventsFile, timedEventsFile) {
+function roleForTask(taskId) {
+  if (taskId === 'planner') return 'planner';
+  if (taskId === 'judge') return 'judge';
+  return 'worker';
+}
+
+function captureEventsWithTimestamps(stream, eventsFile, timedEventsFile, onLine = null) {
   const events = fs.createWriteStream(eventsFile, { flags: 'a' });
   const timedEvents = fs.createWriteStream(timedEventsFile, { flags: 'a' });
   let buffer = '';
@@ -26,23 +34,37 @@ function captureEventsWithTimestamps(stream, eventsFile, timedEventsFile) {
     while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, newlineIndex).replace(/\r$/, '');
       buffer = buffer.slice(newlineIndex + 1);
-      if (line) writeLine(line);
+      if (!line) continue;
+      writeLine(line);
+      if (onLine) onLine(line);
     }
   });
   stream.on('end', () => {
-    if (buffer) writeLine(buffer.replace(/\r$/, ''));
+    if (buffer) {
+      const line = buffer.replace(/\r$/, '');
+      writeLine(line);
+      if (onLine) onLine(line);
+    }
     events.end();
     timedEvents.end();
   });
 }
 
-export function createHeadlessRunner({ codexBin, agentExecutor = createCodexExecutor({ codexBin }) } = {}) {
+export function createHeadlessRunner({ codexBin, piBin, workerBackend = 'codex' } = {}) {
+  const normalizedBackend = normalizeWorkerBackend(workerBackend, 'KANBAN_WORKER_BACKEND');
+  const codexExecutor = createCodexExecutor({ codexBin });
+  const piExecutor = normalizedBackend === 'pi' ? createPiExecutor({ piBin }) : null;
   const runningProcesses = new Map();
 
+  function executorForTask(taskId) {
+    return roleForTask(taskId) === 'worker' && piExecutor ? piExecutor : codexExecutor;
+  }
+
   function startAgentTask({ runId, taskId, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false }) {
-    const prepared = agentExecutor.prepareHeadlessTask({ prompt, sandbox, cwd, outDir, skipGitRepoCheck });
+    const executor = executorForTask(taskId);
+    const prepared = executor.prepareHeadlessTask({ prompt, sandbox, cwd, outDir, skipGitRepoCheck, runId, taskId });
     const child = spawn(prepared.command, prepared.args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    captureEventsWithTimestamps(child.stdout, prepared.paths.events, prepared.paths.timedEvents);
+    captureEventsWithTimestamps(child.stdout, prepared.paths.events, prepared.paths.timedEvents, prepared.onStdoutLine);
     child.stderr.pipe(fs.createWriteStream(prepared.paths.stderr, { flags: 'a' }));
     const key = processKey(runId, taskId);
     const listeners = [];
@@ -85,7 +107,7 @@ export function createHeadlessRunner({ codexBin, agentExecutor = createCodexExec
     return runningProcesses.has(processKey(runId, taskId));
   }
 
-  return { kind: 'headless', startAgentTask, startCodexTask: startAgentTask, stopRun, hasRunning };
+  return { kind: 'headless', workerBackend: normalizedBackend, startAgentTask, startCodexTask: startAgentTask, stopRun, hasRunning };
 }
 
 export const headlessRunner = createHeadlessRunner();

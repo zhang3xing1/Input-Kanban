@@ -34,6 +34,7 @@ test('createRun stores default worker sandbox', async () => {
   const state = await createRun({ label: 'default sandbox', repo, taskText: 'noop' });
   assert.equal(state.workerSandbox, 'workspace-write');
   assert.equal(state.codexSkipGitRepoCheck, false);
+  assert.equal(state.workerBackend, 'codex');
 });
 
 test('createRun stores optional Codex git repo check bypass', async () => {
@@ -143,6 +144,11 @@ test('createRun rejects a missing workspace path', async () => {
     () => createRun({ label: 'missing', workspace: path.join(tmp, 'missing'), taskText: 'noop' }),
     error => error.statusCode === 400 && /does not exist/.test(error.message)
   );
+});
+
+test('createRun accepts pi worker backend', async () => {
+  const state = await createRun({ label: 'pi worker', repo, taskText: 'noop', workerBackend: 'pi' });
+  assert.equal(state.workerBackend, 'pi');
 });
 
 test('renameRun updates and trims a run label', async () => {

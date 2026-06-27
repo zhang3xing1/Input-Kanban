@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import {
   DEFAULT_WORKSPACE, DEFAULT_REPO, RUNS_DIR, ensureDir, nowIso, makeRunId, readJson,
   writeJsonAtomic, fileInfo, readTextMaybe, extractFirstJsonObject, listRunDirs,
-  pathForRun, roleDir, safeIdPart, normalizeRunner
+  pathForRun, roleDir, safeIdPart, normalizeRunner, normalizeWorkerBackend
 } from './utils.js';
 import { matchThreadToMarkers } from './appServerClient.js';
 import { formatCodexEventsJsonl } from './eventFormatter.js';
@@ -51,11 +51,17 @@ function workspacePathOf(state) { return path.resolve(state?.workspacePath || st
 function workspaceNameOf(state) { return state?.workspaceName || path.basename(workspacePathOf(state)) || workspacePathOf(state); }
 function runnerForMode(mode = LEGACY_DEFAULT_RUNNER) {
   const normalized = normalizeRunner(mode || LEGACY_DEFAULT_RUNNER, 'runner');
-  if (!runnerCache.has(normalized)) runnerCache.set(normalized, createDefaultRunner(normalized));
-  return runnerCache.get(normalized);
+  const workerBackend = normalizeWorkerBackend(process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex', 'KANBAN_WORKER_BACKEND');
+  const cacheKey = `${normalized}:${workerBackend}`;
+  if (!runnerCache.has(cacheKey)) runnerCache.set(cacheKey, createDefaultRunner(normalized, { workerBackend }));
+  return runnerCache.get(cacheKey);
 }
 function runnerForState(state) {
-  return runnerForMode(state?.runner || LEGACY_DEFAULT_RUNNER);
+  const runnerMode = state?.runner || LEGACY_DEFAULT_RUNNER;
+  const workerBackend = normalizeWorkerBackend(state?.workerBackend || process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex', 'KANBAN_WORKER_BACKEND');
+  const cacheKey = `${runnerMode}:${workerBackend}`;
+  if (!runnerCache.has(cacheKey)) runnerCache.set(cacheKey, createDefaultRunner(runnerMode, { workerBackend }));
+  return runnerCache.get(cacheKey);
 }
 async function resolveRunRunner(requestedRunner) {
   if (process.env.KANBAN_RUNNER) {
@@ -298,7 +304,7 @@ function approvePlanGate(state, approvedBy = 'local-user') {
   return true;
 }
 
-export async function createRun({ label = '', taskText = '', workspace = '', repo = DEFAULT_REPO, maxParallel = 3, workerSandbox = 'workspace-write', planApproval = false, requiresPlanApproval = false, codexSkipGitRepoCheck = false, runner: runRunner, tmuxDependencyChecker = detectTmuxDependency } = {}) {
+export async function createRun({ label = '', taskText = '', workspace = '', repo = DEFAULT_REPO, maxParallel = 3, workerSandbox = 'workspace-write', workerBackend = 'codex', planApproval = false, requiresPlanApproval = false, codexSkipGitRepoCheck = false, runner: runRunner, tmuxDependencyChecker = detectTmuxDependency } = {}) {
   const resolvedWorkspace = await assertWorkspacePath(workspace || repo || DEFAULT_WORKSPACE);
   const workspaceMeta = await detectWorkspaceMetadata(resolvedWorkspace);
   const runLabel = deriveRunLabel(label, taskText);
@@ -322,6 +328,7 @@ export async function createRun({ label = '', taskText = '', workspace = '', rep
     repo: resolvedWorkspace,
     maxParallel: Number(maxParallel) || 3,
     workerSandbox: normalizeSandbox(workerSandbox),
+    workerBackend: normalizeWorkerBackend(workerBackend, 'KANBAN_WORKER_BACKEND'),
     codexSkipGitRepoCheck: !!codexSkipGitRepoCheck,
     gates: { planApproval: normalizePlanApprovalGate(planApproval || requiresPlanApproval) },
     runner: selectedRunner,

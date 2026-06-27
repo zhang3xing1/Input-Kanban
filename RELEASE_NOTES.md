@@ -4,6 +4,22 @@
 
 - No unreleased changes yet.
 
+## v0.0.26
+
+### Highlights
+
+- Add a headless `pi` worker backend while keeping planner and final judge on Codex exec.
+- Add a Web UI `Worker 后端` selector so new runs can choose `Codex exec` or `Pi Coding Agent` for workers.
+- Add CLI/API worker backend support through `--worker-backend <codex|pi>`, `workerBackend`, and `KANBAN_WORKER_BACKEND`.
+- Persist the worker backend in run state and keep Codex as the default for existing behavior.
+- Record Pi JSON events, timed events, stderr, exit code, prompt, and `last_message.md` artifacts for headless worker tasks.
+- Resolve Pi `.js` launchers through Node on Windows to avoid `spawn EFTYPE` failures.
+
+### Verification
+
+- `npm run check` passed locally with 129 tests.
+- Windows-native validation passed on `zhangxing_win` after installing `pi` 0.80.2 with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`; `npm run check` passed with 129 tests in a temporary Windows validation directory.
+
 ## v0.0.25
 
 ### Highlights

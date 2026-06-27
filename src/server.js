@@ -46,7 +46,7 @@ async function readJsonObject(req) {
   return body;
 }
 
-const CREATE_RUN_KEYS = new Set(['label', 'taskText', 'workspace', 'repo', 'maxParallel', 'workerSandbox', 'planApproval', 'requiresPlanApproval', 'codexSkipGitRepoCheck', 'runner']);
+const CREATE_RUN_KEYS = new Set(['label', 'taskText', 'workspace', 'repo', 'maxParallel', 'workerSandbox', 'workerBackend', 'planApproval', 'requiresPlanApproval', 'codexSkipGitRepoCheck', 'runner']);
 
 function sanitizeCreateRunBody(body) {
   for (const key of Object.keys(body)) {
@@ -290,6 +290,7 @@ async function handleApi(req, res, url, appClient) {
         if (hasRunner && !String(body.runner || '').trim()) return send(res, 400, { error: 'runner cannot be empty' });
         const requestedRunner = hasRunner ? normalizeRunner(body.runner, 'runner') : await effectiveRunner();
         body.runner = requestedRunner;
+        if (!Object.hasOwn(body, 'workerBackend')) body.workerBackend = process.env.KANBAN_WORKER_BACKEND || 'codex';
         return send(res, 201, await createRun(body));
       }
       return methodNotAllowed(res);
