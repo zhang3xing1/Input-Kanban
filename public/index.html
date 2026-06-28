@@ -370,6 +370,10 @@ let pendingArchiveRunId = null;
 let pendingAction = null;
 let currentState = null;
 let lastAutoRefreshAt = null;
+let lastSelectedLoadMs = null;
+let lastSelectedLoadAt = null;
+let lastFileLoadMs = null;
+let lastFileLoadAt = null;
 let sessionManagementOpen = false;
 let sessionManagementTab = 'board';
 const SESSION_MODAL_HEIGHT_STORAGE_KEY = 'input-kanban.sessionManagementHeight';
@@ -394,6 +398,22 @@ let appConfigState = { effectiveRunner: 'headless', runnerEnvOverride: false, de
 let appConfigLoadPromise = null;
 let tmuxDependencyState = null;
 let tmuxDependencyModalState = { tmux: null, guidance: '', revealed: false };
+const FILE_TEXT_CACHE_LIMIT = 80;
+const fileTextCache = new Map();
+const FILE_INFO_KEY_BY_NAME = {
+  'prompt.md': 'prompt',
+  'events.jsonl': 'events',
+  'events_timed.jsonl': 'timedEvents',
+  'events.pretty': 'events',
+  'stderr.log': 'stderr',
+  'last_message.md': 'lastMessage',
+  'exit_code': 'exitCode',
+  'manual_result.md': 'manualResult',
+  'run.sh': 'runScript',
+  'run.ps1': 'runScript',
+  'run.cmd': 'runScript',
+  'tmux.json': 'tmux'
+};
 
 async function api(path, opts={}) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -404,6 +424,25 @@ async function api(path, opts={}) {
   }
   const ct = res.headers.get('content-type') || '';
   return ct.includes('application/json') ? res.json() : res.text();
+}
+function cacheSet(cache, key, value) {
+  if (!key) return;
+  cache.set(key, value);
+  while (cache.size > FILE_TEXT_CACHE_LIMIT) cache.delete(cache.keys().next().value);
+}
+function fileCacheKey(runId, taskId, name) {
+  const infoKey = FILE_INFO_KEY_BY_NAME[name];
+  if (!runId || !taskId || !infoKey) return '';
+  const info = taskById(taskId)?.files?.[infoKey];
+  if (!info?.exists) return '';
+  return `${runId}:${taskId}:${name}:${info.size || 0}:${info.mtimeMs || info.mtime || ''}`;
+}
+async function cachedTaskFileText(runId, taskId, name) {
+  const key = fileCacheKey(runId, taskId, name);
+  if (key && fileTextCache.has(key)) return fileTextCache.get(key);
+  const text = await api(`/api/runs/${runId}/tasks/${taskId}/file?name=${encodeURIComponent(name)}`);
+  cacheSet(fileTextCache, key, text);
+  return text;
 }
 function errorDetail(error) {
   const message = error?.message || String(error || '');
@@ -993,18 +1032,25 @@ function setWorkspaceFilter(value) {
 async function selectRun(id) { selectedRun = id; selectedTask = null; selectedFileName = null; clearFileView(); hideCreateForm(); await refreshSelected(); }
 async function refreshSelected({auto=false} = {}) {
   if (!selectedRun) return;
-  currentState = await api(`/api/runs/${selectedRun}/status`);
-  statusByRunId.set(selectedRun, currentState);
-  if (auto) lastAutoRefreshAt = new Date();
-  document.getElementById('selected').innerHTML = renderSelectedHeader();
-  renderActionToolbar();
-  if (auto) requestAnimationFrame(triggerRefreshPulse);
-  updateAutoRefreshHint();
-  updateRunNotice();
-  await loadTaskDescription();
-  renderTasks(); await refreshRuns();
-  if (selectedTask && selectedFileName) await loadFile(selectedFileName, { preserveScroll: true });
-  if (sessionManagementOpen) await refreshSessionManagement();
+  const loadStartedAt = performance.now();
+  try {
+    currentState = await api(`/api/runs/${selectedRun}/status`);
+    statusByRunId.set(selectedRun, currentState);
+    if (auto) lastAutoRefreshAt = new Date();
+    document.getElementById('selected').innerHTML = renderSelectedHeader();
+    renderActionToolbar();
+    if (auto) requestAnimationFrame(triggerRefreshPulse);
+    updateAutoRefreshHint();
+    updateRunNotice();
+    await loadTaskDescription();
+    renderTasks(); await refreshRuns();
+    if (selectedTask && selectedFileName) await loadFile(selectedFileName, { preserveScroll: true });
+    if (sessionManagementOpen) await refreshSessionManagement();
+  } finally {
+    lastSelectedLoadMs = performance.now() - loadStartedAt;
+    lastSelectedLoadAt = new Date();
+    updateRefreshPulseTitle();
+  }
 }
 function renderSelectedHeader() {
   if (!currentState) return '<div class="muted">未选择任务批次</div>';
@@ -1034,9 +1080,18 @@ async function loadTaskDescription() {
   if (!selectedRun) { document.getElementById('taskDescription').textContent = '未选择任务批次'; return; }
   document.getElementById('taskDescription').textContent = await api(`/api/runs/${selectedRun}/task-text`);
 }
-function refreshPulseChip() {
+function refreshPulseTitle() {
   const last = lastAutoRefreshAt ? lastAutoRefreshAt.toLocaleTimeString() : '尚未触发';
-  return `<span id="refreshPulse" class="refresh-pulse-chip" title="自动刷新:每 ${AUTO_REFRESH_MS / 1000} 秒;上次 ${esc(last)}"><span class="refresh-pulse-dot"></span></span>`;
+  const selectedLoad = lastSelectedLoadMs === null ? '尚未记录' : `${formatDurationMs(lastSelectedLoadMs)}${lastSelectedLoadAt ? `｜${lastSelectedLoadAt.toLocaleTimeString()}` : ''}`;
+  const fileLoad = lastFileLoadMs === null ? '尚未记录' : `${formatDurationMs(lastFileLoadMs)}${lastFileLoadAt ? `｜${lastFileLoadAt.toLocaleTimeString()}` : ''}`;
+  return `自动刷新:每 ${AUTO_REFRESH_MS / 1000} 秒;上次 ${last}\n批次详情加载:${selectedLoad}\n任务文件加载:${fileLoad}`;
+}
+function updateRefreshPulseTitle() {
+  const el = document.getElementById('refreshPulse');
+  if (el) el.title = refreshPulseTitle();
+}
+function refreshPulseChip() {
+  return `<span id="refreshPulse" class="refresh-pulse-chip" title="${esc(refreshPulseTitle())}"><span class="refresh-pulse-dot"></span></span>`;
 }
 function actionButton({ key, label, onclick, variant = '', state = '', disabled = false, title = '' }) {
   const classes = [variant, state ? `state-${state}` : ''].filter(Boolean).join(' ');
@@ -1348,6 +1403,17 @@ function updateRunNotice() {
     el.textContent = '';
     return;
   }
+  if (currentState.statusRefreshError) {
+    el.classList.remove('hidden');
+    el.textContent = `状态刷新暂时被锁占用，当前显示的是上次保存的快照。${currentState.statusRefreshError}`;
+    return;
+  }
+  const warning = (currentState.warnings || []).find(item => item?.message);
+  if (warning) {
+    el.classList.remove('hidden');
+    el.textContent = warning.message;
+    return;
+  }
   const error = currentState.planner?.planParseError;
   if (currentState.status === 'plan_empty') {
     el.classList.remove('hidden');
@@ -1498,25 +1564,32 @@ async function selectTask(id) {
 }
 async function loadFile(name, { preserveScroll = false } = {}) {
   if (!selectedRun || !selectedTask) return;
-  selectedFileName = name;
-  const pre = document.getElementById('fileContent');
-  const previousScrollTop = pre.scrollTop;
-  const wasAtBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
-  let text;
-  const selected = taskById(selectedTask);
-  if (name === 'result.json' && selected?.manualCompletion?.hasManualResult) {
-    const manualText = await api(`/api/runs/${selectedRun}/tasks/${selectedTask}/file?name=manual_result.md`);
-    text = manualText ? `【这次是人工结果】\n\n${manualText}` : await api(`/api/runs/${selectedRun}/tasks/${selectedTask}/file?name=${encodeURIComponent(name)}`);
-  } else {
-    text = await api(`/api/runs/${selectedRun}/tasks/${selectedTask}/file?name=${encodeURIComponent(name)}`);
+  const fileLoadStartedAt = performance.now();
+  try {
+    selectedFileName = name;
+    const pre = document.getElementById('fileContent');
+    const previousScrollTop = pre.scrollTop;
+    const wasAtBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+    let text;
+    const selected = taskById(selectedTask);
+    if (name === 'result.json' && selected?.manualCompletion?.hasManualResult) {
+      const manualText = await cachedTaskFileText(selectedRun, selectedTask, 'manual_result.md');
+      text = manualText ? `【这次是人工结果】\n\n${manualText}` : await cachedTaskFileText(selectedRun, selectedTask, name);
+    } else {
+      text = await cachedTaskFileText(selectedRun, selectedTask, name);
+    }
+    pre.textContent = text;
+    if (name === 'events.pretty' && (!preserveScroll || wasAtBottom)) pre.scrollTop = pre.scrollHeight;
+    else if (preserveScroll) pre.scrollTop = previousScrollTop;
+    else pre.scrollTop = 0;
+    if (name === 'events.pretty') await renderExecutionSummary();
+    else hideExecutionSummary();
+    updateCopyLastMessageButton();
+  } finally {
+    lastFileLoadMs = performance.now() - fileLoadStartedAt;
+    lastFileLoadAt = new Date();
+    updateRefreshPulseTitle();
   }
-  pre.textContent = text;
-  if (name === 'events.pretty' && (!preserveScroll || wasAtBottom)) pre.scrollTop = pre.scrollHeight;
-  else if (preserveScroll) pre.scrollTop = previousScrollTop;
-  else pre.scrollTop = 0;
-  if (name === 'events.pretty') await renderExecutionSummary();
-  else hideExecutionSummary();
-  updateCopyLastMessageButton();
 }
 function clearFileView() {
   document.getElementById('fileTitle').textContent = '点击任务后查看详情';
@@ -1596,9 +1669,9 @@ async function renderExecutionSummary() {
   const el = document.getElementById('executionSummary');
   let raw = '';
   let timedRaw = '';
-  try { raw = await api(`/api/runs/${selectedRun}/tasks/${selectedTask}/file?name=events.jsonl`); }
+  try { raw = await cachedTaskFileText(selectedRun, selectedTask, 'events.jsonl'); }
   catch { raw = ''; }
-  try { timedRaw = await api(`/api/runs/${selectedRun}/tasks/${selectedTask}/file?name=events_timed.jsonl`); }
+  try { timedRaw = await cachedTaskFileText(selectedRun, selectedTask, 'events_timed.jsonl'); }
   catch { timedRaw = ''; }
   const task = taskById(selectedTask);
   const taskMs = taskDurationMs(task);

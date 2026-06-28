@@ -26,6 +26,7 @@ const RUN_STATE_LOCK_NAME = 'run_state.lock';
 const RUN_STATE_LOCK_STALE_MS = 30000;
 const RUN_STATE_LOCK_TIMEOUT_MS = 30000;
 const LEGACY_DEFAULT_RUNNER = 'headless';
+const CODEX_TRUST_DIRECTORY_PATTERN = /Not inside a trusted directory and --skip-git-repo-check was not specified/i;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function assertWorkerBackendCompatible(runnerMode, workerBackend) {
@@ -64,6 +65,15 @@ function planPath(runDir) { return path.join(runDir, 'plan.json'); }
 function lockPath(runDir) { return path.join(runDir, RUN_STATE_LOCK_NAME); }
 function workspacePathOf(state) { return path.resolve(state?.workspacePath || state?.repo || DEFAULT_WORKSPACE || DEFAULT_REPO); }
 function workspaceNameOf(state) { return state?.workspaceName || path.basename(workspacePathOf(state)) || workspacePathOf(state); }
+function addRunWarning(state, warning) {
+  const warnings = Array.isArray(state.warnings) ? state.warnings : [];
+  if (!warnings.some(item => item?.kind === warning.kind)) warnings.push({ ...warning, createdAt: nowIso() });
+  state.warnings = warnings;
+}
+async function hasCodexTrustDirectoryError(dir) {
+  const stderr = await readTextMaybe(path.join(dir, 'stderr.log'), 20000);
+  return CODEX_TRUST_DIRECTORY_PATTERN.test(stderr || '');
+}
 function runnerForMode(mode = LEGACY_DEFAULT_RUNNER, { workerBackend = process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex', tmuxShell = 'auto' } = {}) {
   const normalized = normalizeRunner(mode || LEGACY_DEFAULT_RUNNER, 'runner');
   const normalizedWorkerBackend = normalizeWorkerBackend(workerBackend, 'KANBAN_WORKER_BACKEND');
@@ -169,12 +179,12 @@ function normalizeWorkspaceState(state) {
   return state;
 }
 
-async function isStaleRunLock(lockFile) {
+async function isStaleRunLock(lockFile, staleMs = RUN_STATE_LOCK_STALE_MS) {
   const info = await fileInfo(lockFile);
   if (!info.exists) return false;
   const modifiedAt = Date.parse(info.mtime || '');
   if (!Number.isFinite(modifiedAt)) return true;
-  if (Date.now() - modifiedAt < RUN_STATE_LOCK_STALE_MS) return false;
+  if (Date.now() - modifiedAt < staleMs) return false;
   const lockData = await readJson(lockFile, null);
   const pid = Number(lockData?.pid);
   if (!Number.isFinite(pid) || pid <= 0) return true;
@@ -207,7 +217,7 @@ export async function acquireRunStateLock(runId, { timeoutMs = RUN_STATE_LOCK_TI
       };
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
-      if (await isStaleRunLock(lockFile) && Date.now() - startedAt >= staleMs) {
+      if (await isStaleRunLock(lockFile, staleMs)) {
         await fsp.unlink(lockFile).catch(() => {});
         continue;
       }
@@ -225,6 +235,14 @@ async function withRunStateLock(runId, fn, options = {}) {
   } finally {
     await release();
   }
+}
+
+function logAsyncRunStateUpdateError(runId, role, error) {
+  const message = error?.message || String(error || 'unknown error');
+  console.error(`Input Kanban ${role} state update failed for ${runId}: ${message}`);
+}
+function isRunStateLockBusyError(error) {
+  return /run state lock busy/i.test(error?.message || String(error || ''));
 }
 
 function shouldMarkRunnerUnknown(target) {
@@ -556,16 +574,34 @@ export async function startPlanner(runId) {
     state.planner = { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir, attempt: (state.plannerAttempts?.length || 0) + 1 };
     await saveRun(state);
     child.onExit(async code => {
-      await withRunStateLock(runId, async () => {
-        const s = await loadRun(runId); if (!s || s.status === 'stopped') return;
-        s.planner.exitCode = code; s.planner.endedAt = nowIso(); s.planner.status = code === 0 ? 'completed' : 'failed';
-        const planResult = await materializePlan(s);
-        if (s.planner.status !== 'completed') s.status = 'plan_failed';
-        else if (planResult.ok) s.status = 'planned';
-        else if (planResult.empty) s.status = 'plan_empty';
-        else s.status = 'plan_failed';
-        await saveRun(s);
-      });
+      try {
+        let shouldRetryWithSkipGitRepoCheck = false;
+        await withRunStateLock(runId, async () => {
+          const s = await loadRun(runId); if (!s || s.status === 'stopped') return;
+          s.planner.exitCode = code; s.planner.endedAt = nowIso(); s.planner.status = code === 0 ? 'completed' : 'failed';
+          if (code !== 0 && !s.codexSkipGitRepoCheck && await hasCodexTrustDirectoryError(roleDir(pathForRun(runId), 'planner'))) {
+            s.codexSkipGitRepoCheck = true;
+            addRunWarning(s, {
+              kind: 'codex_skip_git_repo_check_auto_enabled',
+              severity: 'warning',
+              message: 'Codex refused to run because the workspace is not a trusted Git directory; enabled --skip-git-repo-check and retried the planner.',
+              role: 'planner'
+            });
+            shouldRetryWithSkipGitRepoCheck = true;
+            await saveRun(s);
+            return;
+          }
+          const planResult = await materializePlan(s);
+          if (s.planner.status !== 'completed') s.status = 'plan_failed';
+          else if (planResult.ok) s.status = 'planned';
+          else if (planResult.empty) s.status = 'plan_empty';
+          else s.status = 'plan_failed';
+          await saveRun(s);
+        });
+        if (shouldRetryWithSkipGitRepoCheck) await startPlanner(runId);
+      } catch (error) {
+        logAsyncRunStateUpdateError(runId, 'planner', error);
+      }
     });
     return state;
   });
@@ -963,22 +999,39 @@ export async function startJudge(runId) {
     state.status = 'judging';
     await saveRun(state);
     child.onExit(async code => {
-      await withRunStateLock(runId, async () => {
-        const s = await loadRun(runId); if (!s || s.status === 'stopped') return;
-        s.judge.exitCode = code; s.judge.endedAt = nowIso(); s.judge.status = code === 0 ? 'completed' : 'failed';
-        const text = await readTextMaybe(path.join(outDir, 'last_message.md'), 1000000);
-        const verdict = extractFirstJsonObject(text);
-        if (verdict) { s.judge.verdict = verdict; await writeJsonAtomic(path.join(outDir, 'verdict.json'), verdict); }
-        s.status = s.judge.status === 'completed' ? 'judged' : 'judge_failed';
-        await saveRun(s);
-      });
+      try {
+        await withRunStateLock(runId, async () => {
+          const s = await loadRun(runId); if (!s || s.status === 'stopped') return;
+          s.judge.exitCode = code; s.judge.endedAt = nowIso(); s.judge.status = code === 0 ? 'completed' : 'failed';
+          const text = await readTextMaybe(path.join(outDir, 'last_message.md'), 1000000);
+          const verdict = extractFirstJsonObject(text);
+          if (verdict) { s.judge.verdict = verdict; await writeJsonAtomic(path.join(outDir, 'verdict.json'), verdict); }
+          s.status = s.judge.status === 'completed' ? 'judged' : 'judge_failed';
+          await saveRun(s);
+        });
+      } catch (error) {
+        logAsyncRunStateUpdateError(runId, 'judge', error);
+      }
     });
     return state;
   });
 }
 
 export async function refreshRun(runId, appClient = null, options = {}) {
-  return await loadAndRefreshRun(runId, appClient, { light: false, ...options });
+  try {
+    return await loadAndRefreshRun(runId, appClient, { light: false, ...options });
+  } catch (error) {
+    if (options.fallbackOnLockBusy && isRunStateLockBusyError(error)) {
+      const state = await loadRun(runId);
+      if (!state) return null;
+      normalizeWorkspaceState(state);
+      state.runner = normalizeRunner(state.runner || LEGACY_DEFAULT_RUNNER, 'runner');
+      applyRunAgentBackends(state);
+      state.statusRefreshError = error.message || String(error);
+      return state;
+    }
+    throw error;
+  }
 }
 
 export async function autoAdvanceRun(runId, { appClient = null, startCreated = false, maxRetries = 1, retryReason = 'auto retry from scheduler' } = {}) {
@@ -1032,7 +1085,8 @@ export async function autoAdvanceActiveRuns({ appClient = null, startCreated = f
   return results;
 }
 
-async function loadAndRefreshRun(runId, appClient = null, { light = false, tmuxSessionChecker = null } = {}) {
+async function loadAndRefreshRun(runId, appClient = null, { light = false, tmuxSessionChecker = null, lockTimeoutMs = null } = {}) {
+  const lockOptions = Number.isFinite(lockTimeoutMs) ? { timeoutMs: lockTimeoutMs } : {};
   return await withRunStateLock(runId, async () => {
     const state = await loadRun(runId);
     if (!state) return null;
@@ -1051,7 +1105,7 @@ async function loadAndRefreshRun(runId, appClient = null, { light = false, tmuxS
     applyRunAgentBackends(state);
     await saveRun(state);
     return state;
-  });
+  }, lockOptions);
 }
 
 async function recoverCompletedPlanner(state) {

@@ -7,7 +7,7 @@ import path from 'node:path';
 const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'input-kanban-run-state-lock-'));
 process.env.KANBAN_RUNS_DIR = tmp;
 
-const { acquireRunStateLock } = await import(`../src/orchestrator.js?run-state-lock=${Date.now()}`);
+const { acquireRunStateLock, refreshRun } = await import(`../src/orchestrator.js?run-state-lock=${Date.now()}`);
 
 test('acquireRunStateLock recovers a stale lock', async () => {
   const runId = 'run_lock_recovery';
@@ -24,4 +24,35 @@ test('acquireRunStateLock recovers a stale lock', async () => {
   assert.equal(lockData.runId, runId);
   await release();
   await assert.rejects(() => fsp.access(lockFile), { code: 'ENOENT' });
+});
+
+test('refreshRun can return a snapshot quickly when run state lock is busy', async () => {
+  const runId = 'run_lock_busy_snapshot';
+  const runDir = path.join(tmp, runId);
+  await fsp.mkdir(runDir, { recursive: true });
+  await fsp.writeFile(path.join(runDir, 'run_state.json'), JSON.stringify({
+    runId,
+    label: 'Busy lock snapshot',
+    status: 'judged',
+    createdAt: '2026-06-10T00:00:00.000Z',
+    repo: tmp,
+    workspacePath: tmp,
+    runner: 'headless',
+    planner: { status: 'completed' },
+    tasks: [],
+    batches: [],
+    judge: { status: 'completed' }
+  }, null, 2));
+
+  const release = await acquireRunStateLock(runId, { timeoutMs: 1000, staleMs: 100000 });
+  try {
+    await assert.rejects(() => refreshRun(runId, null, { lockTimeoutMs: 5 }), /run state lock busy/);
+    const startedAt = Date.now();
+    const state = await refreshRun(runId, null, { lockTimeoutMs: 5, fallbackOnLockBusy: true });
+    assert.equal(state.runId, runId);
+    assert.equal(state.statusRefreshError, `run state lock busy: ${runId}`);
+    assert.ok(Date.now() - startedAt < 1000);
+  } finally {
+    await release();
+  }
 });

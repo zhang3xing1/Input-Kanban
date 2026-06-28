@@ -114,7 +114,7 @@ export class CodexAppServerClient {
     this.initialized = true;
   }
 
-  async listThreads({ cwd, limit = 100, searchTerm = null } = {}) {
+  async listThreads({ cwd, limit = 100, searchTerm = null, timeoutMs = 20000 } = {}) {
     await this.ensureInitialized();
     return await this.request('thread/list', {
       cwd: cwd || null,
@@ -123,7 +123,7 @@ export class CodexAppServerClient {
       searchTerm,
       sortDirection: 'desc',
       sortKey: 'created_at'
-    }, 20000);
+    }, timeoutMs);
   }
 
   stop() {

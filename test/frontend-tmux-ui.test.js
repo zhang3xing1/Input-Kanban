@@ -75,6 +75,7 @@ function createFrontendHarness() {
 api = async (requestPath, opts = {}) => { calls.push({ kind: 'api', path: requestPath, opts }); return {}; };
 refreshSelected = async () => { calls.push({ kind: 'refreshSelected' }); };
 globalThis.__setRun = (runId, state) => { selectedRun = runId; currentState = state; };
+globalThis.__setSelectedTask = taskId => { selectedTask = taskId; };
 globalThis.__runActionState = runActionState;
 globalThis.__dispatchRun = dispatchRun;
 globalThis.__createRun = createRun;
@@ -87,6 +88,7 @@ globalThis.__renderWorkerBackendHint = renderWorkerBackendHint;
   globalThis.__taskById = taskById;
   globalThis.__sessionCell = sessionCell;
   globalThis.__taskActionInfoCell = taskActionInfoCell;
+  globalThis.__loadFile = loadFile;
   globalThis.__setApi = nextApi => { api = nextApi; };
   globalThis.__calls = calls;`, context);
   context.__storage = storage;
@@ -539,6 +541,9 @@ test('selected run header uses compact metadata chips', () => {
   assert.match(html, /\.refresh-pulse-chip/);
   assert.match(html, /@keyframes refresh-spin/);
   assert.match(script, /function refreshPulseChip\(\)/);
+  assert.match(script, /function refreshPulseTitle\(\)/);
+  assert.match(script, /批次详情加载/);
+  assert.match(script, /任务文件加载/);
   assert.match(script, /requestAnimationFrame\(triggerRefreshPulse\)/);
   assert.doesNotMatch(script, /durationSeconds\(currentState\.createdAt, currentState\.updatedAt\)/);
   assert.match(script, /copyRunRepoPath\(event, '\$\{r\.runId\}'\)/);
@@ -625,6 +630,34 @@ test('task session cell and attention resume respect agent backend', () => {
   assert.doesNotMatch(harness.__sessionCell(piTask), /stale-codex-thread-should-not-show/);
   assert.match(harness.__taskActionInfoCell('T-pi', piTask), /Pi worker 暂无 resume 命令/);
   assert.doesNotMatch(harness.__taskActionInfoCell('T-pi', piTask), /复制 Codex resume 命令/);
+});
+
+test('file viewer caches task log files while switching details', async () => {
+  const harness = createFrontendHarness();
+  const files = {
+    events: { exists: true, size: 10, mtimeMs: 100 },
+    timedEvents: { exists: true, size: 20, mtimeMs: 200 },
+    lastMessage: { exists: true, size: 5, mtimeMs: 50 }
+  };
+  harness.__setRun('run_cache', {
+    runId: 'run_cache',
+    tasks: [{ id: 'T-01', name: 'Worker', status: 'completed', files }],
+    batches: []
+  });
+  harness.__setSelectedTask('T-01');
+  harness.__setApi(async (requestPath, opts = {}) => {
+    harness.__calls.push({ kind: 'api', path: requestPath, opts });
+    if (requestPath.includes('events_timed.jsonl')) return JSON.stringify({ receivedAt: '2026-01-01T00:00:00.000Z', event: { type: 'done' } });
+    if (requestPath.includes('events.jsonl') || requestPath.includes('events.pretty')) return JSON.stringify({ type: 'done' });
+    return '';
+  });
+
+  await harness.__loadFile('events.pretty');
+  await harness.__loadFile('events.pretty');
+
+  const fileRequests = harness.__calls.filter(call => call.kind === 'api' && call.path.includes('/file?name='));
+  assert.deepEqual(fileRequests.map(call => call.path.match(/name=([^&]+)/)?.[1]), ['events.pretty', 'events.jsonl', 'events_timed.jsonl']);
+  assert.match(harness.document.getElementById('refreshPulse').title, /任务文件加载:/);
 });
 
 test('file viewer renders role-specific file tabs', () => {

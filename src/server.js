@@ -13,10 +13,15 @@ import { startAutoScheduler } from './scheduler.js';
 
 const PUBLIC_DIR = path.join(APP_ROOT, 'public');
 const AGENT_INFO_TTL_MS = 30000;
+const STATUS_REFRESH_LOCK_TIMEOUT_MS = Number(process.env.KANBAN_STATUS_REFRESH_LOCK_TIMEOUT_MS || 1200);
+const STATUS_APP_SERVER_TIMEOUT_MS = Number(process.env.KANBAN_STATUS_APP_SERVER_TIMEOUT_MS || 300);
+const STATUS_APP_SERVER_CACHE_TTL_MS = Number(process.env.KANBAN_STATUS_APP_SERVER_CACHE_TTL_MS || 30000);
+const STATUS_APP_SERVER_ERROR_TTL_MS = Number(process.env.KANBAN_STATUS_APP_SERVER_ERROR_TTL_MS || 15000);
 const SERVER_CLOSE_FORCE_AFTER_MS = Number(process.env.KANBAN_SERVER_CLOSE_FORCE_AFTER_MS || 3000);
 const execFileAsync = promisify(execFile);
 let codexInfoCache = null;
 let piInfoCache = null;
+const statusAppServerCache = new Map();
 
 function send(res, status, body, type = 'application/json') {
   const data = type === 'application/json' ? JSON.stringify(body, null, 2) : body;
@@ -74,6 +79,36 @@ async function cachedPiInfo(nowMs = Date.now()) {
   const value = await detectPiInfo();
   piInfoCache = { value, expiresAt: nowMs + AGENT_INFO_TTL_MS };
   return value;
+}
+
+function statusAppServerCacheKey({ cwd = '', limit = 100, searchTerm = null } = {}) {
+  return JSON.stringify({ cwd: cwd || null, limit, searchTerm: searchTerm || null });
+}
+
+function cachedStatusAppClient(appClient) {
+  return {
+    async listThreads(params = {}) {
+      const key = statusAppServerCacheKey(params);
+      const now = Date.now();
+      const cached = statusAppServerCache.get(key);
+      if (cached) {
+        const ttl = cached.ok ? STATUS_APP_SERVER_CACHE_TTL_MS : STATUS_APP_SERVER_ERROR_TTL_MS;
+        if (now - cached.at < ttl) {
+          if (cached.ok) return cached.value;
+          throw new Error(cached.error);
+        }
+      }
+      try {
+        const value = await appClient.listThreads({ ...params, timeoutMs: STATUS_APP_SERVER_TIMEOUT_MS });
+        statusAppServerCache.set(key, { ok: true, at: Date.now(), value });
+        return value;
+      } catch (error) {
+        const message = error?.message || String(error || 'unknown app-server error');
+        statusAppServerCache.set(key, { ok: false, at: Date.now(), error: message });
+        throw new Error(message);
+      }
+    }
+  };
 }
 
 function threadTimeValue(thread, keys) {
@@ -297,7 +332,7 @@ async function handleApi(req, res, url, appClient) {
     }
     if (parts[1] === 'runs' && parts.length >= 3) {
       const runId = parts[2];
-      if (parts.length === 4 && parts[3] === 'status' && req.method === 'GET') return send(res, 200, await refreshRun(runId, appClient));
+      if (parts.length === 4 && parts[3] === 'status' && req.method === 'GET') return send(res, 200, await refreshRun(runId, cachedStatusAppClient(appClient), { lockTimeoutMs: STATUS_REFRESH_LOCK_TIMEOUT_MS, fallbackOnLockBusy: true }));
       if (parts.length === 4 && parts[3] === 'plan' && req.method === 'POST') return send(res, 202, await startPlanner(runId));
       if (parts.length === 4 && parts[3] === 'dispatch' && req.method === 'POST') return send(res, 202, await dispatchRun(runId));
       if (parts.length === 4 && parts[3] === 'judge' && req.method === 'POST') return send(res, 202, await startJudge(runId));

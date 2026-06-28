@@ -4,6 +4,23 @@
 
 - No unreleased changes yet.
 
+## v0.0.29
+
+### Highlights
+
+- Recover planner runs automatically when Codex refuses a non-trusted/non-Git workspace by enabling `--skip-git-repo-check` and retrying the planner once.
+- Prevent planner/judge child-process `onExit` state update failures, including `run_state.lock` contention, from crashing `input-kanban serve`.
+- Make stale run-state lock recovery immediate once the lock file is old enough and the recorded pid is no longer alive.
+- Keep `/api/runs/:id/status` responsive when a run-state lock is busy by returning the last saved run snapshot with a clear `statusRefreshError` instead of waiting 30 seconds.
+- Speed up batch detail switching by caching loaded task log files in the browser using run/task/file size and mtime cache keys.
+- Show recent batch-detail and task-file load durations in the batch-detail refresh indicator tooltip.
+- Avoid slow Codex App Server thread enrichment blocking status refreshes by using a short status-specific timeout and caching success/error enrichment results.
+
+### Verification
+
+- `npm run check` passed locally with 146 tests.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` and 146 tests in a temporary Windows validation directory.
+
 ## v0.0.28
 
 ### Highlights
