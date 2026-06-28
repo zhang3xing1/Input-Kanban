@@ -74,6 +74,20 @@ test('createRun stores an explicit runner for the run', async () => {
   }
 });
 
+test('createRun rejects pi worker backend with tmux runner instead of silently using Codex', async () => {
+  const previousRunner = process.env.KANBAN_RUNNER;
+  delete process.env.KANBAN_RUNNER;
+  try {
+    await assert.rejects(
+      () => createRun({ label: 'tmux pi worker', repo, taskText: 'noop', runner: 'tmux', workerBackend: 'pi', tmuxDependencyChecker: tmuxInstalled }),
+      error => error.statusCode === 400 && /pi worker backend currently supports headless runner only/.test(error.message)
+    );
+  } finally {
+    if (previousRunner === undefined) delete process.env.KANBAN_RUNNER;
+    else process.env.KANBAN_RUNNER = previousRunner;
+  }
+});
+
 test('createRun blocks tmux runner when selected shell backend is unavailable', async () => {
   const previousRunner = process.env.KANBAN_RUNNER;
   delete process.env.KANBAN_RUNNER;

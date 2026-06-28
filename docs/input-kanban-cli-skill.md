@@ -22,7 +22,7 @@ If the task came from an external Agent conversation, prepare a structured `task
 - `Context References`
 - `Risks`
 
-Use `skills/input-kanban-prepare/SKILL.md` when an Agent needs a stricter preparation workflow.
+Use `skills/input-kanban-prepare/SKILL.md` when an Agent needs a stricter preparation workflow. If the prepared task should be completed directly in the current conversation instead of being submitted to the dashboard, use `skills/input-kanban-execute/SKILL.md`.
 
 Prefer timestamped task draft paths so handoffs sort chronologically and do not overwrite each other:
 
@@ -34,6 +34,16 @@ Example:
 
 ```text
 .tmp/input-kanban/20260601-1909-p0-precompute-input-copy-boundary-task.md
+```
+
+## When to Execute Directly Instead
+
+Use `input-kanban-execute` instead of `submit` when the prepared task is small enough to complete in one Agent conversation and does not need dashboard scheduling, retries, stop/archive, or final judge orchestration.
+
+Example prompt:
+
+```text
+use input-kanban-execute skill on .tmp/input-kanban/20260601-1909-p0-precompute-input-copy-boundary-task.md and complete it in this conversation
 ```
 
 ## When to Use `submit`

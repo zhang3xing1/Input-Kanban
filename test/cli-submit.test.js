@@ -67,22 +67,27 @@ test('CLI guide prints the agent quick start and JSON form', () => {
   assert.ok(parsed.templates.includes('input-kanban submit --task-file task.md --codex-skip-git-repo-check'));
 });
 
-test('CLI installs bundled prepare skill for Codex', async () => {
+test('CLI installs bundled prepare and execute skills for Codex', async () => {
   const targetRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'input-kanban-codex-skills-'));
   const dryRunOutput = runCli(['--json', 'install-skill', 'codex', '--target-dir', targetRoot, '--dry-run']);
   const dryRun = JSON.parse(dryRunOutput);
   assert.equal(dryRun.ok, true);
   assert.equal(dryRun.provider, 'codex');
   assert.equal(dryRun.installed, false);
-  assert.equal(dryRun.targetDir, path.join(targetRoot, 'input-kanban-prepare'));
+  assert.deepEqual(dryRun.skills.map(item => item.skill), ['input-kanban-prepare', 'input-kanban-execute']);
+  assert.equal(dryRun.skills.find(item => item.skill === 'input-kanban-prepare').targetDir, path.join(targetRoot, 'input-kanban-prepare'));
+  assert.equal(dryRun.skills.find(item => item.skill === 'input-kanban-execute').targetDir, path.join(targetRoot, 'input-kanban-execute'));
 
   const installOutput = runCli(['--json', 'install-skill', 'codex', '--target-dir', targetRoot]);
   const installed = JSON.parse(installOutput);
   assert.equal(installed.installed, true);
   assert.equal(installed.replaced, false);
-  const skillText = await fsp.readFile(path.join(targetRoot, 'input-kanban-prepare', 'SKILL.md'), 'utf8');
-  assert.match(skillText, /# input-kanban-prepare/);
-  assert.match(skillText, /\.tmp\/input-kanban\/YYYYMMDD-HHmm-<short-slug>-task\.md/);
+  const prepareSkillText = await fsp.readFile(path.join(targetRoot, 'input-kanban-prepare', 'SKILL.md'), 'utf8');
+  assert.match(prepareSkillText, /# input-kanban-prepare/);
+  assert.match(prepareSkillText, /\.tmp\/input-kanban\/YYYYMMDD-HHmm-<short-slug>-task\.md/);
+  const executeSkillText = await fsp.readFile(path.join(targetRoot, 'input-kanban-execute', 'SKILL.md'), 'utf8');
+  assert.match(executeSkillText, /# input-kanban-execute/);
+  assert.match(executeSkillText, /complete it in this conversation/);
 });
 
 test('planner prompt consumes structured handoff sections as execution contract', () => {
@@ -593,6 +598,8 @@ test('README focuses on friendly usage and structured handoff', () => {
   assert.match(readme, /Acceptance Criteria/);
   assert.match(readme, /Expected Artifacts/);
   assert.match(readme, /skills\/input-kanban-prepare\/SKILL\.md/);
+  assert.match(readme, /skills\/input-kanban-execute\/SKILL\.md/);
   assert.match(readme, /docs\/input-kanban-prepare\.md/);
+  assert.match(readme, /docs\/input-kanban-execute\.md/);
   assert.match(readme, /\.tmp\/input-kanban\/20260601-1909-p0-precompute-input-copy-boundary-task\.md/);
 });

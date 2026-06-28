@@ -116,15 +116,18 @@ input-kanban --help
 
 `guide` 会输出一个更适合 Agent 的操作循环和可直接复制的示例模板。
 
-### 安装 `input-kanban-prepare` skill
+### 安装内置 Codex skills
 
-如果你想把内置的 `input-kanban-prepare` skill 安装到 Codex：
+如果你想把内置 skills 安装到 Codex：
 
 ```bash
 input-kanban install-skill codex
 ```
 
-这个 skill 专门用于把外部 Agent 对话整理成可执行的 `task.md` 交给看板：它会帮你补齐 `Goal`、`Acceptance Criteria`、`Expected Artifacts`、`Context References`、`Risks`，并在需要时建议批次和并行度。它不负责执行任务，也不负责最终验收。
+这会安装：
+
+- `input-kanban-prepare`：把外部 Agent 对话整理成可执行的 `task.md`，用于提交看板或直接执行。
+- `input-kanban-execute`：读取这种 `task.md`，在当前单个 Agent 对话里直接完成任务，不提交到看板。
 
 如需指定 Codex skills 根目录：
 
@@ -153,6 +156,16 @@ input-kanban submit --task-file task.md --plan-approval
 - `Risks`：风险、假设和不确定点
 
 可以参考 `skills/input-kanban-prepare/SKILL.md` 或 `docs/input-kanban-prepare.md`。这样 planner 会拿到更稳定的执行契约，而不是从一段模糊需求里从零猜。
+
+### 使用当前对话直接执行 prepared task
+
+如果任务较小，不需要看板、多 worker、批次调度或最终 judge，可以用 `input-kanban-execute` 在当前对话里直接执行 prepare 生成的 `task.md`：
+
+```text
+use input-kanban-execute skill on .tmp/input-kanban/20260601-1909-example-task.md and complete it in this conversation
+```
+
+这种方式不会创建 Input Kanban run；它适合单线程小/中型任务。复杂任务仍建议使用 `input-kanban submit --task-file ... --plan-approval`。详见 `skills/input-kanban-execute/SKILL.md` 和 `docs/input-kanban-execute.md`。
 
 ## 常用命令速查
 
@@ -281,4 +294,6 @@ npm run check
 - [Agent CLI 说明](docs/input-kanban-cli-README.md)
 - [Agent CLI Skill 草稿](docs/input-kanban-cli-skill.md)
 - [结构化手交说明](docs/input-kanban-prepare.md)
+- [直接执行 prepared task](docs/input-kanban-execute.md)
 - [input-kanban-prepare Skill](skills/input-kanban-prepare/SKILL.md)
+- [input-kanban-execute Skill](skills/input-kanban-execute/SKILL.md)

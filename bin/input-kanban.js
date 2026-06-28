@@ -10,6 +10,7 @@ const PACKAGE_VERSION = JSON.parse(await fsp.readFile(new URL('../package.json',
 const VALID_RUNNERS = ['headless', 'tmux'];
 const VALID_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access'];
 const COMMANDS = new Set(['serve', 'submit', 'runs', 'status', 'result', 'retry', 'stop', 'auto', 'guide', 'install-skill', 'deps']);
+const BUNDLED_CODEX_SKILLS = ['input-kanban-prepare', 'input-kanban-execute'];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const STATUS_TEXT = {
   created: '已创建', planning: '拆分中', plan_failed: '拆分失败', plan_empty: '拆分为空', planned: '已拆分',
@@ -299,7 +300,7 @@ Usage:
 Agent guide:
   input-kanban guide           Print a friendly agent-oriented control loop and templates
   input-kanban install-skill codex
-                               Install bundled input-kanban-prepare skill for Codex
+                               Install bundled input-kanban skills for Codex
 
 Serve options:
   --host <host>              Host to bind, default 127.0.0.1
@@ -611,8 +612,9 @@ Recommended task draft path:
   ${preferredTaskFilePattern}
   Example: ${preferredTaskFileExample}
 
-Install bundled prepare skill:
+Install bundled Codex skills:
   input-kanban install-skill codex
+  Installs: input-kanban-prepare, input-kanban-execute
 
 Example templates:
 ${templates.map((item, index) => `  ${String(index + 1).padStart(2, '0')}. ${item}`).join('\n')}
@@ -898,30 +900,52 @@ async function installSkill(args) {
   const provider = String(args.provider || '').toLowerCase();
   if (!provider) throw new Error('install-skill requires a provider, currently: codex');
   if (provider !== 'codex') throw new Error(`unsupported skill provider: ${args.provider}; expected codex`);
-  const sourceDir = fileURLToPath(new URL('../skills/input-kanban-prepare', import.meta.url));
   const skillsRoot = args.targetDir ? path.resolve(args.targetDir) : defaultCodexSkillsDir();
-  const targetDir = path.join(skillsRoot, 'input-kanban-prepare');
-  const exists = await pathExists(targetDir);
-  const payload = { ok: true, command: 'install-skill', provider, skill: 'input-kanban-prepare', sourceDir, skillsRoot, targetDir, dryRun: !!args.dryRun, installed: false, replaced: false };
+  const skills = BUNDLED_CODEX_SKILLS.map(skill => {
+    const sourceDir = fileURLToPath(new URL(`../skills/${skill}`, import.meta.url));
+    const targetDir = path.join(skillsRoot, skill);
+    return { skill, sourceDir, targetDir };
+  });
+  for (const item of skills) item.exists = await pathExists(item.targetDir);
+  const payload = {
+    ok: true,
+    command: 'install-skill',
+    provider,
+    skillsRoot,
+    skills: skills.map(item => ({ skill: item.skill, sourceDir: item.sourceDir, targetDir: item.targetDir, exists: !!item.exists, installed: false, replaced: false })),
+    dryRun: !!args.dryRun,
+    installed: false,
+    replaced: false
+  };
   if (args.dryRun) {
     if (args.json) { printJson(payload); return; }
-    console.log(`Skill: input-kanban-prepare`);
     console.log(`Provider: codex`);
-    console.log(`Source: ${sourceDir}`);
-    console.log(`Target: ${targetDir}`);
+    for (const item of skills) {
+      console.log(`Skill: ${item.skill}`);
+      console.log(`Source: ${item.sourceDir}`);
+      console.log(`Target: ${item.targetDir}`);
+    }
     console.log('Dry run: no files copied');
     return;
   }
-  if (exists && !args.force) throw new Error(`skill already exists: ${targetDir}; pass --force to replace it`);
+  const existing = skills.filter(item => item.exists);
+  if (existing.length && !args.force) {
+    throw new Error(`skill already exists: ${existing.map(item => item.targetDir).join(', ')}; pass --force to replace it`);
+  }
   await fsp.mkdir(skillsRoot, { recursive: true });
-  if (exists && args.force) await fsp.rm(targetDir, { recursive: true, force: true });
-  await fsp.cp(sourceDir, targetDir, { recursive: true });
+  for (const item of skills) {
+    if (item.exists && args.force) await fsp.rm(item.targetDir, { recursive: true, force: true });
+    await fsp.cp(item.sourceDir, item.targetDir, { recursive: true });
+    const payloadItem = payload.skills.find(entry => entry.skill === item.skill);
+    payloadItem.installed = true;
+    payloadItem.replaced = item.exists && !!args.force;
+  }
   payload.installed = true;
-  payload.replaced = exists && !!args.force;
+  payload.replaced = payload.skills.some(item => item.replaced);
   if (args.json) { printJson(payload); return; }
-  console.log(`已安装 Codex skill: input-kanban-prepare`);
-  console.log(`位置: ${targetDir}`);
-  console.log('在 Codex 对话中可尝试使用：use input-kanban-prepare skill');
+  console.log(`已安装 Codex skills: ${BUNDLED_CODEX_SKILLS.join(', ')}`);
+  console.log(`位置: ${skillsRoot}`);
+  console.log('在 Codex 对话中可尝试使用：use input-kanban-prepare skill 或 use input-kanban-execute skill');
 }
 
 async function confirmTerminalInstall(displayCommand) {

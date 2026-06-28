@@ -28,6 +28,14 @@ const RUN_STATE_LOCK_TIMEOUT_MS = 30000;
 const LEGACY_DEFAULT_RUNNER = 'headless';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function assertWorkerBackendCompatible(runnerMode, workerBackend) {
+  if (runnerMode === 'tmux' && workerBackend === 'pi') {
+    const error = new Error('pi worker backend currently supports headless runner only; choose headless runner or Codex worker backend');
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 async function assertRunnerDependencies(runnerMode, { tmuxShell = 'auto', tmuxDependencyChecker = detectTmuxDependency } = {}) {
   if (runnerMode !== 'tmux') return;
   const tmux = await tmuxDependencyChecker({ tmuxShell });
@@ -69,6 +77,24 @@ function runnerForState(state) {
     workerBackend: state?.workerBackend || process.env.KANBAN_WORKER_BACKEND || process.env.KANBAN_AGENT_BACKEND || 'codex',
     tmuxShell: state?.tmuxShell || 'auto'
   });
+}
+
+function agentBackendForRole(state, role) {
+  if (role !== 'worker') return 'codex';
+  const runner = normalizeRunner(state?.runner || LEGACY_DEFAULT_RUNNER, 'runner');
+  if (runner !== 'headless') return 'codex';
+  return normalizeWorkerBackend(state?.workerBackend || 'codex', 'workerBackend');
+}
+
+function applyRunAgentBackends(state) {
+  if (!state) return state;
+  if (state.planner) state.planner.agentBackend = agentBackendForRole(state, 'planner');
+  if (state.judge) state.judge.agentBackend = agentBackendForRole(state, 'judge');
+  for (const task of state.tasks || []) task.agentBackend = agentBackendForRole(state, 'worker');
+  for (const batch of state.batches || []) {
+    for (const task of batch.tasks || []) task.agentBackend = agentBackendForRole(state, 'worker');
+  }
+  return state;
 }
 async function resolveRunRunner(requestedRunner) {
   if (process.env.KANBAN_RUNNER) {
@@ -322,6 +348,8 @@ export async function createRun({ label = '', taskText = '', workspace = '', rep
   const runId = makeRunId(runLabel);
   const runDir = pathForRun(runId);
   const selectedRunner = await resolveRunRunner(runRunner);
+  const selectedWorkerBackend = normalizeWorkerBackend(workerBackend, 'KANBAN_WORKER_BACKEND');
+  assertWorkerBackendCompatible(selectedRunner, selectedWorkerBackend);
   const selectedTmuxShell = selectedRunner === 'tmux' ? await resolveRunTmuxShell(runTmuxShell) : 'auto';
   await assertRunnerDependencies(selectedRunner, { tmuxShell: selectedTmuxShell, tmuxDependencyChecker });
   await ensureDir(runDir);
@@ -340,7 +368,7 @@ export async function createRun({ label = '', taskText = '', workspace = '', rep
     repo: resolvedWorkspace,
     maxParallel: Number(maxParallel) || 3,
     workerSandbox: normalizeSandbox(workerSandbox),
-    workerBackend: normalizeWorkerBackend(workerBackend, 'KANBAN_WORKER_BACKEND'),
+    workerBackend: selectedWorkerBackend,
     codexSkipGitRepoCheck: !!codexSkipGitRepoCheck,
     gates: { planApproval: normalizePlanApprovalGate(planApproval || requiresPlanApproval) },
     runner: selectedRunner,
@@ -404,6 +432,7 @@ export async function loadRun(runId) {
       state.workspace.git = workspaceMeta;
     }
     ensureBatchShape(state);
+    applyRunAgentBackends(state);
   }
   return state;
 }
@@ -1019,6 +1048,7 @@ async function loadAndRefreshRun(runId, appClient = null, { light = false, tmuxS
     await scheduleMoreWorkers(state);
     recomputeRunStatus(state);
     if (appClient && !light) await enrichFromAppServer(state, appClient).catch(e => { state.appServerError = e.message; });
+    applyRunAgentBackends(state);
     await saveRun(state);
     return state;
   });
@@ -1473,8 +1503,13 @@ function ensureBatchShape(state) {
 async function enrichFromAppServer(state, appClient) {
   const res = await appClient.listThreads({ cwd: workspacePathOf(state), limit: 100 });
   const threads = res?.data || [];
-  const all = [{ id: 'planner', target: state.planner }, ...(state.tasks || []).map(t => ({ id: t.id, target: t })), { id: 'judge', target: state.judge }];
+  const all = [{ id: 'planner', target: state.planner, role: 'planner' }, ...(state.tasks || []).map(t => ({ id: t.id, target: t, role: 'worker' })), { id: 'judge', target: state.judge, role: 'judge' }];
   for (const item of all) {
+    const backend = item.target?.agentBackend || agentBackendForRole(state, item.role);
+    if (backend !== 'codex') {
+      if (item.target) delete item.target.codexThread;
+      continue;
+    }
     const thread = threads.find(th => matchThreadToMarkers(th, state.runId, item.id));
     if (thread && item.target) item.target.codexThread = { id: thread.id, sessionId: thread.sessionId, source: thread.source, status: thread.status, preview: thread.preview, updatedAt: thread.updatedAt };
   }

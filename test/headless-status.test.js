@@ -13,7 +13,7 @@ process.env.KANBAN_RUNNER = 'headless';
 process.env.KANBAN_CODEX_BIN = codexStub;
 const { refreshRun, autoAdvanceRun, stopRun, dispatchRun } = await import(`../src/orchestrator.js?headless-status=${Date.now()}`);
 
-async function writeRunState({ runId, startedAt, status = 'completed' }) {
+async function writeRunState({ runId, startedAt, status = 'completed', workerBackend = 'codex' }) {
   const runDir = path.join(tmp, runId);
   const workerDir = path.join(runDir, 'workers', 'T-01');
   await fsp.mkdir(path.join(runDir, 'planner'), { recursive: true });
@@ -25,6 +25,7 @@ async function writeRunState({ runId, startedAt, status = 'completed' }) {
     label: 'headless status',
     repo: tmp,
     runner: 'headless',
+    workerBackend,
     maxParallel: 1,
     status: 'running',
     createdAt: startedAt,
@@ -50,7 +51,30 @@ test('refreshRun keeps headless runs free of tmux controls when metadata is abse
   assert.equal(state.runner, 'headless');
   assert.equal(state.tmux, undefined);
   assert.equal(state.tasks[0].status, 'completed');
+  assert.equal(state.tasks[0].agentBackend, 'codex');
   assert.equal(state.tasks[0].tmux, undefined);
+});
+
+test('refreshRun marks pi workers and skips Codex thread enrichment for them', async () => {
+  const startedAt = '2026-06-08T00:00:00.000Z';
+  await writeRunState({ runId: 'run_headless_pi_backend', startedAt, workerBackend: 'pi' });
+  const appClient = {
+    listThreads: async () => ({
+      data: [{
+        id: 'thread-should-not-attach',
+        sessionId: 'session-should-not-attach',
+        source: 'exec',
+        status: 'running',
+        preview: 'ORCHESTRATOR_RUN_ID: run_headless_pi_backend\nORCHESTRATOR_TASK_ID: T-01\n'
+      }]
+    })
+  };
+
+  const state = await refreshRun('run_headless_pi_backend', appClient);
+  assert.equal(state.planner.agentBackend, 'codex');
+  assert.equal(state.judge.agentBackend, 'codex');
+  assert.equal(state.tasks[0].agentBackend, 'pi');
+  assert.equal(state.tasks[0].codexThread, undefined);
 });
 
 test('headless task without tmux metadata does not get manual attention hint', async () => {

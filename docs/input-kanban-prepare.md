@@ -1,6 +1,6 @@
 # Preparing Tasks for Input Kanban
 
-Use this guide when a task starts in an external Agent conversation and should be handed off to `input-kanban` for execution.
+Use this guide when a task starts in an external Agent conversation and should be converted into a structured execution contract. The resulting `task.md` can be submitted to `input-kanban` or executed directly in the current Agent conversation with `input-kanban-execute`.
 
 The goal is not to make Input Kanban do all planning from a vague prompt. The goal is to give it a clear execution contract so the planner, workers, and final judge have better inputs.
 
@@ -9,14 +9,23 @@ The goal is not to make Input Kanban do all planning from a vague prompt. The go
 1. Use the external Agent conversation to clarify the goal, scope, risks, and acceptance criteria.
 2. Convert the discussion into a structured task draft.
 3. Save the draft under `.tmp/input-kanban/` with a timestamped filename: `YYYYMMDD-HHmm-<short-slug>-task.md`.
-4. Submit the task with plan approval:
+4. Choose one execution path.
+
+Dashboard path, for larger or multi-worker work, submits the task with plan approval:
 
 ```bash
 input-kanban submit --task-file .tmp/input-kanban/20260601-1909-p0-precompute-input-copy-boundary-task.md --plan-approval
 ```
 
-5. Review the generated plan before dispatching workers.
-6. Use `status`, `result`, `retry`, and `stop` to control execution.
+Direct single-conversation path, for smaller focused work, uses the execute skill instead:
+
+```text
+use input-kanban-execute skill on .tmp/input-kanban/20260601-1909-p0-precompute-input-copy-boundary-task.md and complete it in this conversation
+```
+
+5. For dashboard execution, review the generated plan before dispatching workers.
+6. For direct execution, verify changes in the current conversation and report acceptance criteria status.
+7. Use `status`, `result`, `retry`, and `stop` to control dashboard execution.
 
 ## Recommended Task File Path
 
@@ -89,13 +98,14 @@ Describe the desired outcome in one or two concrete paragraphs.
 
 ## Skill Template
 
-A reusable skill draft is available at:
+Reusable skill drafts are available at:
 
 ```text
 skills/input-kanban-prepare/SKILL.md
+skills/input-kanban-execute/SKILL.md
 ```
 
-After installing the npm package, you can install the bundled skill for Codex:
+After installing the npm package, you can install the bundled skills for Codex:
 
 ```bash
 input-kanban install-skill codex
@@ -107,4 +117,4 @@ Use `--target-dir` if your Codex skills root is custom:
 input-kanban install-skill codex --target-dir /path/to/codex/skills
 ```
 
-Use it in external Agent tools when you want the Agent to prepare a better `task.md` before invoking Input Kanban.
+Use `input-kanban-prepare` when you want the Agent to prepare a better `task.md`. Use `input-kanban-execute` when that prepared task should be completed directly in one conversation instead of being submitted to the dashboard.

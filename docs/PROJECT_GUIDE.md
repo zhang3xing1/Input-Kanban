@@ -7,12 +7,12 @@ This document explains how Input Kanban is implemented so that humans and coding
 Implementation status:
 
 ```text
-mvp / batch-scheduler / codex-exec-primary / pi-worker-backend / tmux-shell-auto-detect / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap / agent-guide / prepare-skill / runner-config / session-management / compact-attention-ui
+mvp / batch-scheduler / codex-exec-primary / pi-worker-backend / tmux-shell-auto-detect / tmux-batch-layout / buildkite-style-ui / manual-recovery / stop-archive / cli-bootstrap / agent-guide / prepare-execute-skills / runner-config / session-management / compact-attention-ui
 ```
 
 Recent validation:
 
-- `npm run check` passes for the CLI entry, backend modules, and test suite. The current v0.0.27 checkout passes with 137 tests locally and on Windows with `pi` 0.80.2 installed. The Windows validation host did not have tmux/psmux or a supported installer, so tmux shell backend detection and missing-install handling were verified without a real tmux smoke run.
+- `npm run check` passes for the CLI entry, backend modules, and test suite. The current v0.0.28 checkout passes with 142 tests locally and on Windows with `pi` 0.80.2 installed. The Windows validation host did not have tmux/psmux or a supported installer, so tmux shell backend detection and missing-install handling were verified without a real tmux smoke run.
 - A smoke test can start `input-kanban` on a temporary port and read `GET /api/health`.
 - The frontend is a single HTML file; its inline script can be extracted and checked with `node --check` when edited.
 
@@ -160,7 +160,7 @@ input-kanban deps tmux [--json]
 input-kanban deps install tmux [--dry-run] [--yes] [--json]
 ```
 
-`guide` prints an agent-oriented control loop, decision rules, and copyable templates. `install-skill codex` installs the bundled `input-kanban-prepare` skill, which helps external Agent conversations produce structured `task.md` handoffs. `deps tmux` checks tmux availability; `deps install tmux` prints or runs a platform-specific install plan with explicit confirmation unless `--yes` is passed.
+`guide` prints an agent-oriented control loop, decision rules, and copyable templates. `install-skill codex` installs bundled `input-kanban-prepare` and `input-kanban-execute` skills: prepare creates structured `task.md` handoffs, while execute consumes those handoffs directly in the current Agent conversation without creating a dashboard run. `deps tmux` checks tmux availability; `deps install tmux` prints or runs a platform-specific install plan with explicit confirmation unless `--yes` is passed.
 
 Default behavior:
 
@@ -440,6 +440,7 @@ src/status.js             run status classification helpers
 src/utils.js              paths, IDs, atomic JSON writes, file info, JSON extraction
 public/index.html         single-file frontend, no build step
 skills/input-kanban-prepare/SKILL.md bundled prepare skill for structured handoffs
+skills/input-kanban-execute/SKILL.md bundled execute skill for direct single-conversation execution
 README.md                 user-facing overview
 docs/PROJECT_GUIDE.md     implementation guide for humans and agents
 ENVIRONMENT.md            runtime environment variable reference

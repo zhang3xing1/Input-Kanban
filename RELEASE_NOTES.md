@@ -4,6 +4,22 @@
 
 - No unreleased changes yet.
 
+## v0.0.28
+
+### Highlights
+
+- Add the bundled `input-kanban-execute` Codex skill for completing prepared `task.md` handoffs directly in one Agent conversation without creating an Input Kanban dashboard run.
+- Update `input-kanban install-skill codex` to install both `input-kanban-prepare` and `input-kanban-execute`.
+- Document the two prepared-task execution paths: submit to the dashboard or execute directly in the current conversation.
+- Surface per-task agent backend labels in the task table so Codex and Pi worker tasks are clearly distinguished.
+- Hide Codex resume actions for Pi workers and avoid attaching Codex App Server threads to Pi-backed worker tasks.
+- Reject `runner=tmux` with `workerBackend=pi` instead of silently running tmux workers through Codex; the Web UI now warns immediately when that incompatible combination is selected.
+
+### Verification
+
+- `npm run check` passed locally with 142 tests.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` and 142 tests in a temporary Windows validation directory.
+
 ## v0.0.27
 
 ### Highlights

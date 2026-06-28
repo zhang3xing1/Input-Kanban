@@ -80,9 +80,12 @@ globalThis.__dispatchRun = dispatchRun;
 globalThis.__createRun = createRun;
 globalThis.__initializeRunnerModePreference = initializeRunnerModePreference;
 globalThis.__saveRunnerModePreference = saveRunnerModePreference;
+globalThis.__handleWorkerBackendChange = handleWorkerBackendChange;
+globalThis.__renderWorkerBackendHint = renderWorkerBackendHint;
   globalThis.__showTmuxInstallCommand = showTmuxInstallCommand;
   globalThis.__hasRunTmuxMetadata = hasRunTmuxMetadata;
   globalThis.__taskById = taskById;
+  globalThis.__sessionCell = sessionCell;
   globalThis.__taskActionInfoCell = taskActionInfoCell;
   globalThis.__setApi = nextApi => { api = nextApi; };
   globalThis.__calls = calls;`, context);
@@ -163,6 +166,7 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.doesNotMatch(script, /后端命令 <code>/);
   assert.match(html, /<select id="workerSandbox">/);
   assert.match(html, /<select id="workerBackend">/);
+  assert.match(html, /id="workerBackendHint"/);
   assert.match(html, /id="codexSkipGitRepoCheck" type="checkbox" checked/);
   assert.match(html, /<select id="runnerMode">/);
   assert.match(html, /<option value="default" selected>跟随默认<\/option>/);
@@ -179,6 +183,8 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.doesNotMatch(script, /\/api\/tmux\?shell=/);
   assert.match(script, /async function ensureAppConfigLoaded\(\)/);
   assert.match(script, /async function ensureRunnerSelectionReady\(\)/);
+  assert.match(script, /function ensureWorkerBackendForCreate\(\)/);
+  assert.match(script, /Pi Coding Agent 目前只支持 Headless worker/);
   assert.match(script, /async function ensureTmuxForCreate\(\)/);
   assert.match(script, /tmux 未安装，不能创建 tmux runner 批次。/);
   assert.match(script, /input-kanban deps install tmux/);
@@ -225,12 +231,16 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.match(script, /跳过 Git 检查/);
   assert.match(script, /function initializeWorkerSandboxPreference\(\)/);
   assert.match(script, /function initializeRunnerModePreference\(\)/);
+  assert.match(script, /function handleWorkerBackendChange\(\)/);
+  assert.match(script, /function workerBackendHintText\(\)/);
+  assert.match(script, /Pi Coding Agent 只支持 Headless worker/);
   assert.match(script, /function saveRunnerModePreference\(\)/);
   assert.match(script, /localStorage\.getItem\(WORKER_SANDBOX_STORAGE_KEY\)/);
   assert.match(script, /localStorage\.getItem\(RUNNER_MODE_STORAGE_KEY\)/);
   assert.match(script, /select\.addEventListener\('change', saveWorkerSandboxPreference\)/);
-  assert.match(script, /select\.addEventListener\('change', saveRunnerModePreference\)/);
-  assert.match(script, /saveWorkerSandboxPreference\(\);\r?\n  saveWorkerBackendPreference\(\);\r?\n  saveRunnerModePreference\(\);\r?\n  if \(!await ensureRunnerSelectionReady\(\)\) return;\r?\n  if \(!await ensureTmuxForCreate\(\)\) return;\r?\n  const runner = selectedRunnerMode\(\);/);
+  assert.match(script, /select\.addEventListener\('change', handleWorkerBackendChange\)/);
+  assert.match(script, /select\.addEventListener\('change', handleRunnerModeChange\)/);
+  assert.match(script, /saveWorkerSandboxPreference\(\);\r?\n  saveWorkerBackendPreference\(\);\r?\n  saveRunnerModePreference\(\);\r?\n  if \(!await ensureRunnerSelectionReady\(\)\) return;\r?\n  if \(!ensureWorkerBackendForCreate\(\)\) return;\r?\n  if \(!await ensureTmuxForCreate\(\)\) return;\r?\n  const runner = selectedRunnerMode\(\);/);
   assert.match(script, /saveRunnerModePreference\(\);\r?\n  if \(!await ensureRunnerSelectionReady\(\)\) return;/);
   assert.doesNotMatch(script, /selectedTmuxShellMode/);
   assert.doesNotMatch(script, /body\.tmuxShell/);
@@ -268,6 +278,40 @@ test('footer exposes codex and pi backend status and create form exposes worker 
   assert.match(script, /await archiveRunById\(runId, \{ confirmFirst: false \}\)/);
   assert.match(script, /metaChip\('沙箱', sandbox/);
   assert.match(script, /danger: sandbox === 'danger-full-access'/);
+});
+
+test('worker backend selection shows Pi scope hint and warns for tmux', () => {
+  const harness = createFrontendHarness();
+  const hint = harness.document.getElementById('workerBackendHint');
+
+  harness.runnerMode.value = 'headless';
+  harness.workerBackend.value = 'pi';
+  harness.__handleWorkerBackendChange();
+  assert.match(hint.textContent, /Pi Coding Agent 仅用于 Headless worker/);
+  assert.equal(harness.__calls.some(call => call.kind === 'alert'), false);
+
+  harness.runnerMode.value = 'tmux';
+  harness.workerBackend.value = 'pi';
+  harness.__handleWorkerBackendChange();
+  assert.match(hint.textContent, /当前 Runner 为 tmux/);
+  assert.match(harness.__calls.find(call => call.kind === 'alert')?.message || '', /Pi Coding Agent 目前只支持 Headless worker/);
+});
+
+test('create form blocks pi worker backend with tmux runner before creating a run', async () => {
+  const harness = createFrontendHarness();
+  harness.runnerMode.value = 'tmux';
+  harness.workerBackend.value = 'pi';
+  harness.__setApi(async (requestPath, opts = {}) => {
+    harness.__calls.push({ kind: 'api', path: requestPath, opts });
+    if (requestPath === '/api/runs') return { runId: 'unexpected' };
+    return {};
+  });
+
+  await harness.__createRun();
+
+  assert.equal(harness.__calls.some(call => call.kind === 'api' && call.path === '/api/runs'), false);
+  const alert = harness.__calls.find(call => call.kind === 'alert');
+  assert.match(alert?.message || '', /Pi Coding Agent 目前只支持 Headless worker/);
 });
 
 test('create form blocks tmux run creation when tmux is missing', async () => {
@@ -535,15 +579,18 @@ test('task table has no tmux column or file-viewer tmux panel', () => {
   assert.doesNotMatch(script, /当前 runner 为 headless，无需终端附加操作/);
   assert.doesNotMatch(script, /const tmuxHeader = isTmuxMode\(\)/);
   assert.doesNotMatch(script, /hideTmuxPanel/);
-  assert.match(script, /<th>进程号\/退出码<\/th><th>Codex 会话ID<\/th><th>最终回复<\/th><th>操作<\/th>/);
+  assert.match(script, /<th>进程号\/退出码<\/th><th>会话<\/th><th>最终回复<\/th><th>操作<\/th>/);
   assert.match(html, /th:nth-child\(6\), td:nth-child\(6\) \{ width: 116px; \}/);
-  assert.match(html, /\.session-cell-wrap \{ display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; \}/);
+  assert.match(html, /\.session-cell-wrap \{ display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; white-space: normal; \}/);
+  assert.match(html, /\.session-agent-label \{ color: var\(--muted\); font-size: 10px; font-weight: 700; line-height: 1\.15; \}/);
   assert.match(script, /session-cell-wrap/);
+  assert.match(script, /session-id-row/);
   assert.match(script, /function taskAttentionHintCell\(t\)/);
   assert.match(script, /attentionHint\.message/);
   assert.match(script, /function attentionHintText\(t, \{ includeDetail = false \} = \{\}\)/);
   assert.match(script, /原因：\$\{hint\.detail\}/);
   assert.match(script, /attention-resume-label">介入/);
+  assert.match(script, /Pi worker 暂无 resume 命令/);
   assert.match(script, /const command = `codex resume \$\{sessionId\}`/);
   assert.doesNotMatch(script, /codex exec resume/);
   assert.doesNotMatch(script, /执行中预警:/);
@@ -552,6 +599,32 @@ test('task table has no tmux column or file-viewer tmux panel', () => {
   assert.match(html, /\.attention-bubble:hover \.attention-popover, \.attention-bubble:focus-within \.attention-popover \{ display: flex; \}/);
   assert.match(script, /aria-label="查看人工介入提示"/);
   assert.match(script, /role="tooltip"/);
+});
+
+test('task session cell and attention resume respect agent backend', () => {
+  const harness = createFrontendHarness();
+  const codexTask = {
+    id: 'T-codex',
+    status: 'failed',
+    agentBackend: 'codex',
+    codexThread: { id: 'codex-thread-1234567890', sessionId: 'codex-session-1234567890' },
+    attentionHint: { message: '需要人工介入', detail: 'context drift' }
+  };
+  const piTask = {
+    id: 'T-pi',
+    status: 'failed',
+    agentBackend: 'pi',
+    codexThread: { id: 'stale-codex-thread-should-not-show', sessionId: 'stale-codex-session' },
+    attentionHint: { message: '需要人工介入', detail: 'environment blocked' }
+  };
+  assert.match(harness.__sessionCell(codexTask), />Codex</);
+  assert.match(harness.__sessionCell(codexTask), /codex-thread-1234567890/);
+  assert.match(harness.__taskActionInfoCell('T-codex', codexTask), /复制 Codex resume 命令/);
+  assert.match(harness.__taskActionInfoCell('T-codex', codexTask), /resume/);
+  assert.match(harness.__sessionCell(piTask), />Pi</);
+  assert.doesNotMatch(harness.__sessionCell(piTask), /stale-codex-thread-should-not-show/);
+  assert.match(harness.__taskActionInfoCell('T-pi', piTask), /Pi worker 暂无 resume 命令/);
+  assert.doesNotMatch(harness.__taskActionInfoCell('T-pi', piTask), /复制 Codex resume 命令/);
 });
 
 test('file viewer renders role-specific file tabs', () => {
