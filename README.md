@@ -2,6 +2,8 @@
 
 中文 | [English](README.en.md)
 
+冠名支持：<a href="https://ai.input.im"><img src="public/assets/ai-input-logo.png" alt="AI.INPUT.IM" width="18" align="absmiddle" /></a> [AI.INPUT.IM](https://ai.input.im) —— 只用一个 API 调用所有模型，专为开发者打造的 AI API 网关。
+
 你可以把 Input Kanban 当成一个本地 Codex 执行看板：先把任务放进来，再让它自动拆分、派发、执行和验收。下面重点讲**怎么用**，不是讲内部实现。
 
 ## 最快开始

@@ -2,6 +2,8 @@
 
 [中文](README.md) | English
 
+Sponsored by <a href="https://ai.input.im"><img src="public/assets/ai-input-logo.png" alt="AI.INPUT.IM" width="18" align="absmiddle" /></a> [AI.INPUT.IM](https://ai.input.im) — one API for all models, an AI API gateway built for developers.
+
 You can think of Input Kanban as a local Codex execution board: you create a task, and it helps you plan, dispatch, run, and judge it. This README focuses on **how to use it**.
 
 ## Fast Start
