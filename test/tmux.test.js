@@ -296,6 +296,11 @@ test('tmux runner writes run script, metadata, and observes exit_code', async ()
   try {
     assert.equal(runner.hasRunning('run_01', 'planner'), true);
     assert.equal(await fsp.readFile(path.join(outDir, 'prompt.md'), 'utf8'), 'plan this');
+    const job = JSON.parse(await fsp.readFile(path.join(outDir, 'package', 'job.json'), 'utf8'));
+    assert.equal(job.mode, 'standalone');
+    assert.equal(job.role, 'planner');
+    assert.equal(job.execution.backend, 'tmux');
+    assert.equal(job.execution.agentRuntime, 'codex');
 
     const metadata = JSON.parse(await fsp.readFile(path.join(outDir, 'tmux.json'), 'utf8'));
     const script = await fsp.readFile(metadata.runScript, 'utf8');
@@ -371,6 +376,11 @@ test('tmux runner writes run script, metadata, and observes exit_code', async ()
     await finishTmuxHandle(handle, outDir);
   }
   assert.equal(runner.hasRunning('run_01', 'planner'), false);
+  const jobEvents = (await fsp.readFile(path.join(outDir, 'package', 'job_events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(jobEvents.map(event => event.type), ['job.packaged', 'job.started', 'job.completed']);
+  const manifest = JSON.parse(await fsp.readFile(path.join(outDir, 'package', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.files.find(item => item.name === 'tmuxMetadata').exists, true);
+  assert.equal(manifest.files.find(item => item.name === 'exitCode').exists, true);
 });
 
 test('tmux run script quotes codex launcher arrays with spaces and shell characters', async () => {

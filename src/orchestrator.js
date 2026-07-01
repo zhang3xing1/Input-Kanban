@@ -824,7 +824,7 @@ ORCHESTRATOR_BATCH_ID: ${task.batchId || 'batch-1'}
 ${task.prompt}${workerArtifactInstructions(state, task)}${upstreamArtifactInstructions(state, task)}
 `;
   const activeRunner = runnerForState(state);
-  const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: task.id, batchId: task.batchId || 'batch-1', runStatePath: statePath(runDir), prompt: fullPrompt, sandbox: task.sandbox || state.workerSandbox || 'workspace-write', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
+  const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: task.id, batchId: task.batchId || 'batch-1', runStatePath: statePath(runDir), prompt: fullPrompt, sandbox: task.sandbox || state.workerSandbox || 'workspace-write', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck, expectedArtifacts: task.expectedArtifacts || [] });
   Object.assign(task, { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir });
 }
 
@@ -1356,7 +1356,10 @@ async function standardFiles(dir) {
     exitCode: await fileInfo(path.join(dir, 'exit_code')),
     runScript: await fileInfo(runScriptPath),
     tmux: tmuxInfo,
-    manualResult: await fileInfo(path.join(dir, 'manual_result.md'))
+    manualResult: await fileInfo(path.join(dir, 'manual_result.md')),
+    jobPackage: await fileInfo(path.join(dir, 'package', 'job.json')),
+    jobManifest: await fileInfo(path.join(dir, 'package', 'manifest.json')),
+    jobEvents: await fileInfo(path.join(dir, 'package', 'job_events.jsonl'))
   };
 }
 
@@ -1603,7 +1606,7 @@ export async function readRunTaskText(runId) {
 
 export async function readRunFile(runId, taskId, name) {
   const runDir = pathForRun(runId);
-  const allowed = new Set(['prompt.md','events.jsonl','events_timed.jsonl','events.pretty','stderr.log','last_message.md','exit_code','result.json','evidence.json','verdict.json','judge_input.json','manual_completion.json','manual_result.md','run.sh','run.ps1','run.cmd','run-cmd-helper.mjs','run-powershell-helper.mjs','tmux.json']);
+  const allowed = new Set(['prompt.md','events.jsonl','events_timed.jsonl','events.pretty','stderr.log','last_message.md','exit_code','result.json','evidence.json','verdict.json','judge_input.json','manual_completion.json','manual_result.md','run.sh','run.ps1','run.cmd','run-cmd-helper.mjs','run-powershell-helper.mjs','tmux.json','package/job.json','package/prompt.md','package/workspace.json','package/execution.json','package/artifacts.json','package/manifest.json','package/job_events.jsonl']);
   if (!allowed.has(name)) throw new Error('file not allowed');
   let dir;
   if (taskId === 'planner') dir = roleDir(runDir, 'planner');

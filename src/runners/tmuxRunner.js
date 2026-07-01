@@ -10,6 +10,7 @@ import {
 } from '../utils.js';
 import { resolveCodexLauncher } from '../codexLauncher.js';
 import { pathForTmuxShellBackend, resolveTmuxShellBackend, scriptPathForBackend, tmuxShellLaunchCommand } from '../tmuxShell.js';
+import { appendStandaloneJobEvent, writeStandaloneArtifactManifest, writeStandaloneJobPackage } from '../jobPackage.js';
 import {
   DEFAULT_TMUX_BIN,
   sanitizeTmuxSessionName,
@@ -259,7 +260,7 @@ export function createTmuxRunner({
 } = {}) {
   const runningWindows = new Map();
 
-  async function startAgentTask({ runId, taskId, batchId = null, runStatePath = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false }) {
+  async function startAgentTask({ runId, taskId, batchId = null, runStatePath = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false, expectedArtifacts = [] }) {
     await ensureDir(outDir);
     const sessionName = sessionNameForRun(runId);
     const role = roleForTask(taskId);
@@ -273,6 +274,7 @@ export function createTmuxRunner({
     const metadataFile = path.join(outDir, 'tmux.json');
     const startedAt = nowIso();
 
+    writeStandaloneJobPackage({ runId, taskId, batchId, role, prompt, sandbox, cwd, outDir, runner: 'tmux', agentRuntime: 'codex', skipGitRepoCheck, expectedArtifacts });
     await fsp.writeFile(promptFile, prompt);
     const { command: codexCommand, argsPrefix: codexArgsPrefix } = resolveCodexLauncher(codexBin);
     await fsp.writeFile(runScript, buildRunScript({ backend: shellBackend, codexCommand, codexArgsPrefix, sandbox, cwd, outDir, runId, taskId, role, skipGitRepoCheck }));
@@ -345,6 +347,8 @@ export function createTmuxRunner({
         attachPaneCommand,
         readyAt: nowIso()
       });
+      appendStandaloneJobEvent(outDir, { type: 'job.started', runId, taskId, role, backend: 'tmux', agentRuntime: 'codex', sessionName, windowName, paneTarget: taskPaneTarget });
+      writeStandaloneArtifactManifest(outDir, { runId, taskId, role });
     } catch (error) {
       await writeJsonAtomic(metadataFile, {
         ...metadata,
@@ -353,6 +357,8 @@ export function createTmuxRunner({
         error: error?.message || String(error),
         failedAt: nowIso()
       });
+      appendStandaloneJobEvent(outDir, { type: 'job.start_failed', runId, taskId, role, backend: 'tmux', agentRuntime: 'codex', error: error?.message || String(error) });
+      writeStandaloneArtifactManifest(outDir, { runId, taskId, role });
       throw error;
     }
 
@@ -367,6 +373,8 @@ export function createTmuxRunner({
       const code = Number(text.trim());
       exited = true;
       exitCode = Number.isNaN(code) ? null : code;
+      appendStandaloneJobEvent(outDir, { type: exitCode === 0 ? 'job.completed' : 'job.failed', runId, taskId, role, exitCode });
+      writeStandaloneArtifactManifest(outDir, { runId, taskId, role });
       for (const listener of listeners) listener(exitCode);
     }, Math.max(100, Number(pollMs) || 1000));
 
@@ -378,13 +386,14 @@ export function createTmuxRunner({
       },
       stop() {}
     };
-    runningWindows.set(key, { sessionName, windowName, timer });
+    runningWindows.set(key, { sessionName, windowName, timer, outDir, runId, taskId, role });
     return handle;
   }
 
   async function stopRun(runId) {
     for (const [key, value] of runningWindows.entries()) {
       if (!key.startsWith(`${runId}:`)) continue;
+      if (value.outDir) appendStandaloneJobEvent(value.outDir, { type: 'job.stop_requested', runId: value.runId || runId, taskId: value.taskId || '', role: value.role || '', backend: 'tmux', agentRuntime: 'codex' });
       clearInterval(value.timer);
       runningWindows.delete(key);
     }

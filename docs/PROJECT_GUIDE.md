@@ -235,6 +235,24 @@ A task is one worker inside a batch. Batch-level parallelism is controlled by `b
 - `worker`: `codex exec` that performs work. The run-level worker sandbox defaults to `workspace-write`, and the create form can explicitly select `read-only` or `danger-full-access`.
 - `judge`: read-only `codex exec` that performs final evaluation.
 
+### Standalone Job Package
+
+Every started standalone role writes a portable job package under its existing role directory before launching the agent runtime:
+
+```text
+planner/package/job.json
+planner/package/manifest.json
+planner/package/job_events.jsonl
+workers/<taskId>/package/job.json
+workers/<taskId>/package/manifest.json
+workers/<taskId>/package/job_events.jsonl
+judge/package/job.json
+judge/package/manifest.json
+judge/package/job_events.jsonl
+```
+
+The package uses schema `input-kanban.job.v1` and records the common execution contract: `runId`, `taskId`, `role`, `batchId`, `workspace` reference, execution backend (`headless` or `tmux`), agent runtime (`codex` or `pi`), sandbox, prompt file, expected artifacts, and the standard artifact file contract. `manifest.json` records the current existence, size, and mtime of standard artifacts, and `job_events.jsonl` records normalized lifecycle events such as `job.packaged`, `job.started`, `job.completed`, `job.failed`, and `job.stop_requested`. The current artifact files remain in the existing role directory (`prompt.md`, `events.jsonl`, `stderr.log`, `last_message.md`, `exit_code`, etc.) for backward compatibility. Distributed runners should consume the same package contract instead of inventing a second task format.
+
 ## Run State Machine
 
 Common run states:

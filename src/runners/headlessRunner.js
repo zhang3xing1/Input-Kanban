@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { createCodexExecutor } from '../agents/codexExecutor.js';
 import { createPiExecutor } from '../agents/piExecutor.js';
 import { normalizeWorkerBackend } from '../utils.js';
+import { appendStandaloneJobEvent, writeStandaloneArtifactManifest, writeStandaloneJobPackage } from '../jobPackage.js';
 
 function processKey(runId, taskId) {
   return `${runId}:${taskId}`;
@@ -60,10 +61,13 @@ export function createHeadlessRunner({ codexBin, piBin, workerBackend = 'codex' 
     return roleForTask(taskId) === 'worker' && piExecutor ? piExecutor : codexExecutor;
   }
 
-  function startAgentTask({ runId, taskId, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false }) {
+  function startAgentTask({ runId, taskId, batchId = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false, expectedArtifacts = [] }) {
     const executor = executorForTask(taskId);
+    writeStandaloneJobPackage({ runId, taskId, batchId, prompt, sandbox, cwd, outDir, runner: 'headless', agentRuntime: executor.kind, skipGitRepoCheck, expectedArtifacts });
+    const role = roleForTask(taskId);
     const prepared = executor.prepareHeadlessTask({ prompt, sandbox, cwd, outDir, skipGitRepoCheck, runId, taskId });
     const child = spawn(prepared.command, prepared.args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    appendStandaloneJobEvent(outDir, { type: 'job.started', runId, taskId, role, backend: 'headless', agentRuntime: executor.kind, pid: child.pid ?? null });
     captureEventsWithTimestamps(child.stdout, prepared.paths.events, prepared.paths.timedEvents, prepared.onStdoutLine);
     child.stderr.pipe(fs.createWriteStream(prepared.paths.stderr, { flags: 'a' }));
     const key = processKey(runId, taskId);
@@ -75,6 +79,8 @@ export function createHeadlessRunner({ codexBin, piBin, workerBackend = 'codex' 
       exited = true;
       exitCode = code;
       try { fs.writeFileSync(prepared.paths.exitCode, String(code)); } catch {}
+      appendStandaloneJobEvent(outDir, { type: code === 0 ? 'job.completed' : 'job.failed', runId, taskId, role, exitCode: code });
+      writeStandaloneArtifactManifest(outDir, { runId, taskId, role });
       runningProcesses.delete(key);
       for (const listener of listeners) listener(code);
     };
@@ -90,7 +96,7 @@ export function createHeadlessRunner({ codexBin, piBin, workerBackend = 'codex' 
         if (exited) listener(exitCode);
         else listeners.push(listener);
       },
-      stop(signal = 'TERM') { child.kill(signal); }
+      stop(signal = 'TERM') { appendStandaloneJobEvent(outDir, { type: 'job.stop_requested', runId, taskId, role, signal }); child.kill(signal); }
     };
   }
 
