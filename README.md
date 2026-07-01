@@ -101,7 +101,7 @@ input-kanban retry <runId> [taskId]
 input-kanban stop <runId>
 ```
 
-## Agent 与 handoff 工作流
+## Agent 与任务交接工作流
 
 ### CLI-only Agents
 
@@ -160,7 +160,7 @@ input-kanban submit --task-file task.md --plan-approval
 
 可以参考 `skills/input-kanban-prepare/SKILL.md` 或 `docs/input-kanban-prepare.md`。这样 planner 会拿到更稳定的执行契约，而不是从一段模糊需求里从零猜。
 
-### 使用当前对话直接执行 prepared task
+### 使用当前对话直接执行已准备任务
 
 如果任务较小，不需要看板、多 worker、批次调度或最终 judge，可以用 `input-kanban-execute` 在当前对话里直接执行 prepare 生成的 `task.md`：
 
@@ -296,7 +296,7 @@ npm run check
 - [环境变量](ENVIRONMENT.md)
 - [Agent CLI 说明](docs/input-kanban-cli-README.md)
 - [Agent CLI Skill 草稿](docs/input-kanban-cli-skill.md)
-- [结构化手交说明](docs/input-kanban-prepare.md)
-- [直接执行 prepared task](docs/input-kanban-execute.md)
+- [结构化任务交接指南](docs/input-kanban-prepare.md)
+- [直接执行已准备任务](docs/input-kanban-execute.md)
 - [input-kanban-prepare Skill](skills/input-kanban-prepare/SKILL.md)
 - [input-kanban-execute Skill](skills/input-kanban-execute/SKILL.md)
