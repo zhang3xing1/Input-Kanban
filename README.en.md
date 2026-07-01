@@ -94,8 +94,9 @@ input-kanban submit --task-file task.md --no-auto
 ### 5) Check progress, result, retry, or stop
 
 ```bash
-input-kanban status <runId>
-input-kanban status <runId> --watch
+input-kanban status <runId>           # snapshot by default; does not take the state lock
+input-kanban status <runId> --watch   # polls snapshots by default
+input-kanban status <runId> --refresh # explicitly sync runner state
 input-kanban result <runId>
 input-kanban result <runId> --copy
 input-kanban retry <runId> [taskId]

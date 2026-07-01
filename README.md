@@ -92,8 +92,9 @@ input-kanban submit --task-file task.md --no-auto
 ### 5) 查看进度 / 结果 / 重试 / 停止
 
 ```bash
-input-kanban status <runId>
-input-kanban status <runId> --watch
+input-kanban status <runId>          # 默认读取快照，不抢状态锁
+input-kanban status <runId> --watch  # 默认轮询快照
+input-kanban status <runId> --refresh # 显式同步 runner 状态
 input-kanban result <runId>
 input-kanban result <runId> --copy
 input-kanban retry <runId> [taskId]

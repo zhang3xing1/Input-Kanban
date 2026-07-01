@@ -7,7 +7,7 @@ import path from 'node:path';
 const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'input-kanban-run-state-lock-'));
 process.env.KANBAN_RUNS_DIR = tmp;
 
-const { acquireRunStateLock, refreshRun } = await import(`../src/orchestrator.js?run-state-lock=${Date.now()}`);
+const { acquireRunStateLock, refreshRun, snapshotRun } = await import(`../src/orchestrator.js?run-state-lock=${Date.now()}`);
 
 test('acquireRunStateLock recovers a stale lock', async () => {
   const runId = 'run_lock_recovery';
@@ -46,6 +46,12 @@ test('refreshRun can return a snapshot quickly when run state lock is busy', asy
 
   const release = await acquireRunStateLock(runId, { timeoutMs: 1000, staleMs: 100000 });
   try {
+    const snapshotStartedAt = Date.now();
+    const snapshot = await snapshotRun(runId);
+    assert.equal(snapshot.runId, runId);
+    assert.equal(snapshot.statusRefreshError, undefined);
+    assert.ok(Date.now() - snapshotStartedAt < 1000);
+
     await assert.rejects(() => refreshRun(runId, null, { lockTimeoutMs: 5 }), /run state lock busy/);
     const startedAt = Date.now();
     const state = await refreshRun(runId, null, { lockTimeoutMs: 5, fallbackOnLockBusy: true });

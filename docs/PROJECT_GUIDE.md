@@ -89,10 +89,11 @@ Supported status options:
 [runId]
 --runs-dir <path>
 --watch
+--refresh
 --poll-ms <ms>
 ```
 
-`input-kanban status` refreshes and prints a run summary. If no `runId` is provided, it uses the latest run from the shared runs directory. `--watch` keeps polling until the run reaches a terminal state.
+`input-kanban status` prints a run summary from the saved snapshot by default. If no `runId` is provided, it uses the latest run from the shared runs directory. `--watch` keeps polling snapshots until the run reaches a terminal state. Use `--refresh` only when you explicitly want to sync runner state before printing; that path may take the run state lock.
 
 Supported result options:
 

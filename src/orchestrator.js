@@ -1017,16 +1017,17 @@ export async function startJudge(runId) {
   });
 }
 
+export async function snapshotRun(runId) {
+  return await loadRun(runId);
+}
+
 export async function refreshRun(runId, appClient = null, options = {}) {
   try {
     return await loadAndRefreshRun(runId, appClient, { light: false, ...options });
   } catch (error) {
     if (options.fallbackOnLockBusy && isRunStateLockBusyError(error)) {
-      const state = await loadRun(runId);
+      const state = await snapshotRun(runId);
       if (!state) return null;
-      normalizeWorkspaceState(state);
-      state.runner = normalizeRunner(state.runner || LEGACY_DEFAULT_RUNNER, 'runner');
-      applyRunAgentBackends(state);
       state.statusRefreshError = error.message || String(error);
       return state;
     }

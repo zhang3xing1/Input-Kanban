@@ -1037,11 +1037,12 @@ function setWorkspaceFilter(value) {
   refreshRuns().catch(console.error);
 }
 async function selectRun(id) { selectedRun = id; selectedTask = null; selectedFileName = null; clearFileView(); hideCreateForm(); await refreshSelected(); }
-async function refreshSelected({auto=false} = {}) {
+async function refreshSelected({auto=false, refresh=false} = {}) {
   if (!selectedRun) return;
   const loadStartedAt = performance.now();
   try {
-    currentState = await api(`/api/runs/${selectedRun}/status`);
+    const statusUrl = `/api/runs/${selectedRun}/status${refresh ? '?refresh=1' : ''}`;
+    currentState = await api(statusUrl);
     statusByRunId.set(selectedRun, currentState);
     if (auto) lastAutoRefreshAt = new Date();
     document.getElementById('selected').innerHTML = renderSelectedHeader();
@@ -1149,7 +1150,7 @@ function renderActionToolbar() {
   const el = document.getElementById('actionToolbar');
   if (!el) return;
   if (!selectedRun || !currentState) {
-    el.innerHTML = actionButton({ key: 'refresh', label: '刷新状态', onclick: 'refreshSelected()', variant: 'secondary', disabled: true });
+    el.innerHTML = actionButton({ key: 'refresh', label: '刷新状态', onclick: 'refreshSelected({refresh:true})', variant: 'secondary', disabled: true });
     return;
   }
   const plan = runActionState('plan');
@@ -1161,7 +1162,7 @@ function renderActionToolbar() {
     actionButton({ key: 'plan', label: plan.label, onclick: 'planRun()', state: plan.state, disabled: plan.disabled, title: '拆分任务' }),
     actionButton({ key: 'dispatch', label: dispatch.label, onclick: 'dispatchRun()', state: dispatch.state, disabled: dispatch.disabled, title: '派发执行' }),
     actionButton({ key: 'judge', label: judge.label, onclick: 'judgeRun()', state: judge.state, disabled: judge.disabled, title: '汇总验收' }),
-    actionButton({ key: 'refresh', label: '刷新', onclick: 'refreshSelected()', variant: 'secondary' }),
+    actionButton({ key: 'refresh', label: '刷新', onclick: 'refreshSelected({refresh:true})', variant: 'secondary' }),
     actionButton({ key: 'stop', label: stop.label, onclick: 'stopSelectedRun()', variant: 'secondary', state: stop.state, disabled: stop.disabled, title: '停止当前批次' }),
     actionButton({ key: 'archive', label: archive.label, onclick: 'archiveSelectedRun()', variant: 'danger', state: archive.state, disabled: archive.disabled, title: '归档当前批次' })
   ].join('');
@@ -1441,7 +1442,7 @@ function updateAutoRefreshHint() {
   if (!selectedRun || !currentState) { el.textContent = '自动刷新:未启动'; return; }
   const active = ['planning','running','judging','planned','batches_completed','batch_blocked'].includes(currentState.status) || (currentState.tasks || []).some(t => t.status === 'running') || currentState.planner?.status === 'running' || currentState.judge?.status === 'running';
   const last = lastAutoRefreshAt ? lastAutoRefreshAt.toLocaleTimeString() : '尚未触发';
-  el.textContent = active ? `自动模式中:每 ${AUTO_REFRESH_MS / 1000} 秒刷新并推进一次|上次刷新 ${last}` : `自动模式待命:每 ${AUTO_REFRESH_MS / 1000} 秒检查一次|上次刷新 ${last}`;
+  el.textContent = active ? `自动模式中:每 ${AUTO_REFRESH_MS / 1000} 秒读取快照；后台调度器负责推进|上次读取 ${last}` : `自动模式待命:每 ${AUTO_REFRESH_MS / 1000} 秒读取快照|上次读取 ${last}`;
 }
 function taskStatusCell(t) {
   if (t?.manualCompletion) {

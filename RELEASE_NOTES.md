@@ -4,6 +4,21 @@
 
 - No unreleased changes yet.
 
+## v0.0.31
+
+### Highlights
+
+- Make status reads snapshot-first by default: `input-kanban status`, `status --watch`, and the Web dashboard status endpoint now read the saved `run_state.json` snapshot without taking the run-state lock.
+- Add explicit refresh paths for users who need to sync runner state immediately: `input-kanban status <runId> --refresh` and `GET /api/runs/:id/status?refresh=1`.
+- Keep the Web dashboard responsive under concurrent Agent/CLI observation by letting automatic detail refreshes read snapshots while the server scheduler remains responsible for normal auto-advancement.
+- Update the Web refresh button, status hint text, CLI help, README files, and project guide to reflect the new snapshot-vs-refresh semantics.
+- Add regression coverage for snapshot reads while a run-state lock is busy and for the server status endpoint's default snapshot behavior.
+
+### Verification
+
+- `npm run check` passed locally with 147 tests.
+- Windows-native validation passed on `zhangxing_win` with `npm run check` and 147 tests in a temporary Windows validation directory.
+
 ## v0.0.29
 
 ### Highlights

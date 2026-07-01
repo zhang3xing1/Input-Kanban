@@ -85,7 +85,7 @@ function parseRunsArgs(argv) {
 }
 
 function parseStatusArgs(argv) {
-  const args = { host: '127.0.0.1', port: 8787, runsDir: undefined, runId: undefined, watch: false, json: false, pollMs: 3000, help: false };
+  const args = { host: '127.0.0.1', port: 8787, runsDir: undefined, runId: undefined, watch: false, refresh: false, json: false, pollMs: 3000, help: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const next = () => argv[++i];
@@ -95,6 +95,7 @@ function parseStatusArgs(argv) {
     else if (arg === '--port' || arg === '-p') args.port = Number(next());
     else if (arg === '--runs-dir') args.runsDir = next();
     else if (arg === '--watch') args.watch = true;
+    else if (arg === '--refresh') args.refresh = true;
     else if (arg === '--poll-ms') args.pollMs = Number(next());
     else if (!arg.startsWith('-') && !args.runId) args.runId = arg;
     else throw new Error(`unknown status argument: ${arg}`);
@@ -324,7 +325,8 @@ Runs options:
 
 Status options:
   --runs-dir <path>          Runtime runs directory shared with the Web UI
-  --watch                    Keep printing status until the run reaches a terminal state
+  --watch                    Keep printing snapshot status until the run reaches a terminal state
+  --refresh                  Refresh runner state before printing; may take the run state lock
   --poll-ms <ms>             Watch poll interval, default 3000
   -j, --json                 Emit JSON output instead of human text
 
@@ -443,7 +445,8 @@ Usage:
 
 Options:
   --runs-dir <path>          Runtime runs directory shared with the Web UI
-  --watch                    Keep printing status until the run reaches a terminal state
+  --watch                    Keep printing snapshot status until the run reaches a terminal state
+  --refresh                  Refresh runner state before printing; may take the run state lock
   --poll-ms <ms>             Watch poll interval, default 3000
   -j, --json                 Emit JSON output instead of human text
 `);
@@ -716,24 +719,25 @@ function hasRecoverableUnknownTask(state) {
   return (state.tasks || []).some(task => task.status === 'unknown' && (task.exitCode === undefined || task.exitCode === 0));
 }
 
-async function confirmFailureTerminal(runId, state, refreshRun, pollMs) {
+async function confirmFailureTerminal(runId, state, readRunStatus, pollMs) {
   let confirmed = state;
   const deadline = Date.now() + 30000;
   while (confirmed?.status === 'batch_blocked' && hasRecoverableUnknownTask(confirmed) && Date.now() < deadline) {
     await delay(Math.max(500, Number(pollMs) || 3000));
-    confirmed = await refreshRun(runId);
+    confirmed = await readRunStatus(runId);
     if (!confirmed || !isTerminal(confirmed) || confirmed.status !== state.status) return { confirmed: false, state: confirmed };
   }
   return { confirmed: true, state: confirmed };
 }
 
-async function watchRun(runId, { auto = false, pollMs = 3000, quiet = false, maxRetries = 1 } = {}) {
-  const { autoAdvanceRun, refreshRun } = await import('../src/orchestrator.js');
+async function watchRun(runId, { auto = false, pollMs = 3000, quiet = false, maxRetries = 1, refresh = false } = {}) {
+  const { autoAdvanceRun, refreshRun, snapshotRun } = await import('../src/orchestrator.js');
+  const readRunStatus = async () => auto
+    ? await autoAdvanceRun(runId, { startCreated: true, maxRetries, retryReason: 'auto retry from CLI' })
+    : refresh ? await refreshRun(runId) : await snapshotRun(runId);
   let lastStatus = '';
   while (true) {
-    const state = auto
-      ? await autoAdvanceRun(runId, { startCreated: true, maxRetries, retryReason: 'auto retry from CLI' })
-      : await refreshRun(runId);
+    const state = await readRunStatus();
     if (!state) throw new Error(`run not found: ${runId}`);
     const line = statusLine(state);
     if (line !== lastStatus) {
@@ -743,7 +747,7 @@ async function watchRun(runId, { auto = false, pollMs = 3000, quiet = false, max
 
     if (isTerminal(state)) {
       if (isFailureTerminal(state)) {
-        const result = await confirmFailureTerminal(runId, state, refreshRun, pollMs);
+        const result = await confirmFailureTerminal(runId, state, readRunStatus, pollMs);
         if (!result.confirmed) {
           lastStatus = '';
           continue;
@@ -821,14 +825,14 @@ async function runs(args) {
 async function status(args) {
   applyRuntimeEnv(args);
   const runId = args.runId || await latestRunId();
-  const { refreshRun, summaryOfRun } = await import('../src/orchestrator.js');
+  const { refreshRun, snapshotRun, summaryOfRun } = await import('../src/orchestrator.js');
   if (args.watch) {
-    const finalState = await watchRun(runId, { auto: false, pollMs: args.pollMs, quiet: args.json });
+    const finalState = await watchRun(runId, { auto: false, pollMs: args.pollMs, quiet: args.json, refresh: args.refresh });
     if (isFailureTerminal(finalState)) process.exitCode = 1;
     if (args.json) printJson({ ok: true, command: 'status', run: summaryOfRun(finalState) });
     return;
   }
-  const state = await refreshRun(runId);
+  const state = args.refresh ? await refreshRun(runId) : await snapshotRun(runId);
   if (!state) throw new Error(`run not found: ${runId}`);
   if (args.json) { printJson({ ok: true, command: 'status', run: summaryOfRun(state) }); return; }
   printRunStatus(state);

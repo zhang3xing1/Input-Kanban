@@ -44,7 +44,7 @@ test('status endpoint caches slow app-server enrichment failures', async () => {
 
   try {
     const firstStartedAt = Date.now();
-    const firstResponse = await fetch(`${baseUrl}/api/runs/${runId}/status`);
+    const firstResponse = await fetch(`${baseUrl}/api/runs/${runId}/status?refresh=1`);
     const first = await firstResponse.json();
     assert.equal(firstResponse.status, 200);
     assert.equal(first.appServerError, 'thread/list too slow');
@@ -52,7 +52,7 @@ test('status endpoint caches slow app-server enrichment failures', async () => {
     assert.equal(calls, 1);
 
     const secondStartedAt = Date.now();
-    const secondResponse = await fetch(`${baseUrl}/api/runs/${runId}/status`);
+    const secondResponse = await fetch(`${baseUrl}/api/runs/${runId}/status?refresh=1`);
     const second = await secondResponse.json();
     assert.equal(secondResponse.status, 200);
     assert.equal(second.appServerError, 'thread/list too slow');

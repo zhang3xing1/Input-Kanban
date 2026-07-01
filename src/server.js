@@ -8,7 +8,7 @@ import { CodexAppServerClient } from './appServerClient.js';
 import { APP_ROOT, CODEX_BIN, DEFAULT_WORKSPACE, DEFAULT_REPO, PACKAGE_VERSION, PI_BIN, RUNS_DIR, detectCodexInfo, detectPiInfo, normalizeRunner } from './utils.js';
 import { configPath, effectiveRunner, readLocalConfig, updateLocalConfig } from './config.js';
 import { detectTmuxDependency } from './deps.js';
-import { createRun, listRuns, startPlanner, dispatchRun, startJudge, refreshRun, readRunFile, readRunTaskText, markTaskCompleted, stopRun, archiveRun, renameRun, retryRun } from './orchestrator.js';
+import { createRun, listRuns, startPlanner, dispatchRun, startJudge, refreshRun, snapshotRun, readRunFile, readRunTaskText, markTaskCompleted, stopRun, archiveRun, renameRun, retryRun } from './orchestrator.js';
 import { startAutoScheduler } from './scheduler.js';
 
 const PUBLIC_DIR = path.join(APP_ROOT, 'public');
@@ -332,7 +332,13 @@ async function handleApi(req, res, url, appClient) {
     }
     if (parts[1] === 'runs' && parts.length >= 3) {
       const runId = parts[2];
-      if (parts.length === 4 && parts[3] === 'status' && req.method === 'GET') return send(res, 200, await refreshRun(runId, cachedStatusAppClient(appClient), { lockTimeoutMs: STATUS_REFRESH_LOCK_TIMEOUT_MS, fallbackOnLockBusy: true }));
+      if (parts.length === 4 && parts[3] === 'status' && req.method === 'GET') {
+        const shouldRefresh = ['1', 'true', 'yes'].includes(String(url.searchParams.get('refresh') || '').toLowerCase());
+        const state = shouldRefresh
+          ? await refreshRun(runId, cachedStatusAppClient(appClient), { lockTimeoutMs: STATUS_REFRESH_LOCK_TIMEOUT_MS, fallbackOnLockBusy: true })
+          : await snapshotRun(runId);
+        return send(res, 200, state);
+      }
       if (parts.length === 4 && parts[3] === 'plan' && req.method === 'POST') return send(res, 202, await startPlanner(runId));
       if (parts.length === 4 && parts[3] === 'dispatch' && req.method === 'POST') return send(res, 202, await dispatchRun(runId));
       if (parts.length === 4 && parts[3] === 'judge' && req.method === 'POST') return send(res, 202, await startJudge(runId));
