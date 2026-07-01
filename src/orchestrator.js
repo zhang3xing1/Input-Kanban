@@ -70,6 +70,32 @@ function addRunWarning(state, warning) {
   if (!warnings.some(item => item?.kind === warning.kind)) warnings.push({ ...warning, createdAt: nowIso() });
   state.warnings = warnings;
 }
+function jobWorkspaceRef(state) {
+  const workspacePath = workspacePathOf(state);
+  return {
+    type: 'localPath',
+    path: workspacePath,
+    name: state?.workspaceName || path.basename(workspacePath || ''),
+    git: state?.git || state?.workspace?.git || null
+  };
+}
+function jobSecurityPolicy(state, sandbox) {
+  return {
+    sandbox,
+    network: 'inherit',
+    secrets: [],
+    allowedPaths: [workspacePathOf(state)],
+    maxRuntimeMs: null,
+    codexSkipGitRepoCheck: !!state?.codexSkipGitRepoCheck
+  };
+}
+function jobRetryMetadata(task) {
+  const retryCount = Number(task?.retryCount || 0);
+  if (!retryCount) return null;
+  const history = Array.isArray(task.retryHistory) ? task.retryHistory : [];
+  const last = history.at(-1) || null;
+  return { retryCount, retryOfAttempt: retryCount, lastReason: last?.reason || null, history };
+}
 async function hasCodexTrustDirectoryError(dir) {
   const stderr = await readTextMaybe(path.join(dir, 'stderr.log'), 20000);
   return CODEX_TRUST_DIRECTORY_PATTERN.test(stderr || '');
@@ -569,9 +595,10 @@ export async function startPlanner(runId) {
     const taskText = await fsp.readFile(path.join(runDir, 'task.md'), 'utf8');
     const prompt = defaultPlannerPrompt(state, taskText);
     const activeRunner = runnerForState(state);
-    const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: 'planner', batchId: 'planner', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
+    const plannerAttempt = (state.plannerAttempts?.length || 0) + 1;
+    const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: 'planner', batchId: 'planner', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck, attempt: plannerAttempt, workspace: jobWorkspaceRef(state), security: jobSecurityPolicy(state, 'read-only') });
     state.status = 'planning';
-    state.planner = { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir, attempt: (state.plannerAttempts?.length || 0) + 1 };
+    state.planner = { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir, attempt: plannerAttempt };
     await saveRun(state);
     child.onExit(async code => {
       try {
@@ -824,7 +851,9 @@ ORCHESTRATOR_BATCH_ID: ${task.batchId || 'batch-1'}
 ${task.prompt}${workerArtifactInstructions(state, task)}${upstreamArtifactInstructions(state, task)}
 `;
   const activeRunner = runnerForState(state);
-  const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: task.id, batchId: task.batchId || 'batch-1', runStatePath: statePath(runDir), prompt: fullPrompt, sandbox: task.sandbox || state.workerSandbox || 'workspace-write', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck, expectedArtifacts: task.expectedArtifacts || [] });
+  const sandbox = task.sandbox || state.workerSandbox || 'workspace-write';
+  const workerAttempt = Number(task.retryCount || 0) + 1;
+  const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: task.id, batchId: task.batchId || 'batch-1', runStatePath: statePath(runDir), prompt: fullPrompt, sandbox, cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck, expectedArtifacts: task.expectedArtifacts || [], attempt: workerAttempt, retry: jobRetryMetadata(task), workspace: jobWorkspaceRef(state), security: jobSecurityPolicy(state, sandbox) });
   Object.assign(task, { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir });
 }
 
@@ -990,12 +1019,13 @@ export async function startJudge(runId) {
     await writeJsonAtomic(judgeInputPath, judgeInput);
     const prompt = defaultJudgePrompt(state, judgeInputPath);
     const activeRunner = runnerForState(state);
-    const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: 'judge', batchId: 'judge', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck });
     const previousJudgeAttempts = [
       ...(state.judgeAttempts || []).map(item => Number(item.attempt || 0)),
       Number(state.judge?.attempt || 0)
     ].filter(Number.isFinite);
-    state.judge = { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir, attempt: 1 + Math.max(0, ...previousJudgeAttempts) };
+    const judgeAttempt = 1 + Math.max(0, ...previousJudgeAttempts);
+    const child = await activeRunner.startAgentTask({ runId: state.runId, taskId: 'judge', batchId: 'judge', runStatePath: statePath(runDir), prompt, sandbox: 'read-only', cwd: workspacePathOf(state), outDir, skipGitRepoCheck: !!state.codexSkipGitRepoCheck, attempt: judgeAttempt, workspace: jobWorkspaceRef(state), security: jobSecurityPolicy(state, 'read-only') });
+    state.judge = { status: 'running', pid: child.pid, startedAt: nowIso(), dir: outDir, attempt: judgeAttempt };
     state.status = 'judging';
     await saveRun(state);
     child.onExit(async code => {

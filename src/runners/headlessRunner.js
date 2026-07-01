@@ -61,13 +61,14 @@ export function createHeadlessRunner({ codexBin, piBin, workerBackend = 'codex' 
     return roleForTask(taskId) === 'worker' && piExecutor ? piExecutor : codexExecutor;
   }
 
-  function startAgentTask({ runId, taskId, batchId = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false, expectedArtifacts = [] }) {
+  function startAgentTask({ runId, taskId, batchId = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false, expectedArtifacts = [], attempt = 1, retry = null, workspace = null, security = null }) {
     const executor = executorForTask(taskId);
-    writeStandaloneJobPackage({ runId, taskId, batchId, prompt, sandbox, cwd, outDir, runner: 'headless', agentRuntime: executor.kind, skipGitRepoCheck, expectedArtifacts });
+    writeStandaloneJobPackage({ runId, taskId, batchId, prompt, sandbox, cwd, outDir, runner: 'headless', agentRuntime: executor.kind, skipGitRepoCheck, expectedArtifacts, attempt, retry, workspace, security });
     const role = roleForTask(taskId);
     const prepared = executor.prepareHeadlessTask({ prompt, sandbox, cwd, outDir, skipGitRepoCheck, runId, taskId });
     const child = spawn(prepared.command, prepared.args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     appendStandaloneJobEvent(outDir, { type: 'job.started', runId, taskId, role, backend: 'headless', agentRuntime: executor.kind, pid: child.pid ?? null });
+    writeStandaloneArtifactManifest(outDir, { runId, taskId, role });
     captureEventsWithTimestamps(child.stdout, prepared.paths.events, prepared.paths.timedEvents, prepared.onStdoutLine);
     child.stderr.pipe(fs.createWriteStream(prepared.paths.stderr, { flags: 'a' }));
     const key = processKey(runId, taskId);

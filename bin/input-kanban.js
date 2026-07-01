@@ -9,7 +9,7 @@ import { isActiveRunSummaryStatus, isFailureRunStatus, isTerminalRunStatus } fro
 const PACKAGE_VERSION = JSON.parse(await fsp.readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
 const VALID_RUNNERS = ['headless', 'tmux'];
 const VALID_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access'];
-const COMMANDS = new Set(['serve', 'submit', 'runs', 'status', 'result', 'retry', 'stop', 'auto', 'guide', 'install-skill', 'deps']);
+const COMMANDS = new Set(['serve', 'submit', 'runs', 'status', 'result', 'retry', 'stop', 'auto', 'job', 'guide', 'install-skill', 'deps']);
 const BUNDLED_CODEX_SKILLS = ['input-kanban-prepare', 'input-kanban-execute'];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const STATUS_TEXT = {
@@ -131,6 +131,21 @@ function parseRetryArgs(argv) {
     else if (!arg.startsWith('-') && !args.runId) args.runId = arg;
     else if (!arg.startsWith('-') && !args.taskId) args.taskId = arg;
     else throw new Error(`unknown retry argument: ${arg}`);
+  }
+  return args;
+}
+
+function parseJobArgs(argv) {
+  const args = { runsDir: undefined, runId: undefined, taskId: undefined, json: false, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const next = () => argv[++i];
+    if (arg === '--help' || arg === '-h') args.help = true;
+    else if (arg === '--json' || arg === '-j') args.json = true;
+    else if (arg === '--runs-dir') args.runsDir = next();
+    else if (!arg.startsWith('-') && !args.runId) args.runId = arg;
+    else if (!arg.startsWith('-') && !args.taskId) args.taskId = arg;
+    else throw new Error(`unknown job argument: ${arg}`);
   }
   return args;
 }
@@ -296,6 +311,7 @@ Usage:
   input-kanban status [runId] [options]
   input-kanban result [runId] [options]
   input-kanban retry <runId> [taskId] [options]
+  input-kanban job <runId> <taskId> [options]
   input-kanban stop <runId> [options]
 
 Agent guide:
@@ -340,6 +356,10 @@ Retry options:
   --reason <text>            Retry reason stored in task retry history
   --max-retries <n>          Retry limit for automatic retry policy, default 1
   -j, --json                 Emit JSON output instead of human text
+
+Job options:
+  --runs-dir <path>          Runtime runs directory shared with the Web UI
+  -j, --json                 Emit full job package, manifest, and events as JSON
 
 Stop options:
   --runs-dir <path>          Runtime runs directory shared with the Web UI
@@ -480,6 +500,21 @@ Options:
   --reason <text>            Retry reason stored in task retry history
   --max-retries <n>          Retry limit for automatic retry policy, default 1
   -j, --json                 Emit JSON output instead of human text
+`);
+}
+
+function printJobHelp() {
+  console.log(`input-kanban job
+
+Usage:
+  input-kanban job <runId> planner
+  input-kanban job <runId> <taskId>
+  input-kanban job <runId> judge
+  input-kanban --json job <runId> <taskId>
+
+Options:
+  --runs-dir <path>          Runtime runs directory shared with the Web UI
+  -j, --json                 Emit full job package, manifest, and events as JSON
 `);
 }
 
@@ -1051,6 +1086,42 @@ async function retry(args) {
   console.log(`已重试任务: ${(state.retriedTaskIds || []).join(', ') || '-'}`);
 }
 
+function parseJsonText(text, label) {
+  if (!String(text || '').trim()) throw new Error(`${label} not found`);
+  try { return JSON.parse(text); }
+  catch (error) { throw new Error(`invalid ${label}: ${error.message}`); }
+}
+
+function parseJsonLines(text) {
+  return String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => JSON.parse(line));
+}
+
+async function job(args) {
+  applyRuntimeEnv(args);
+  if (!args.runId || !args.taskId) throw new Error('job requires a runId and taskId');
+  const { readRunFile } = await import('../src/orchestrator.js');
+  const jobPackage = parseJsonText(await readRunFile(args.runId, args.taskId, 'package/job.json'), 'job package');
+  let manifest = null;
+  let events = [];
+  try { manifest = parseJsonText(await readRunFile(args.runId, args.taskId, 'package/manifest.json'), 'artifact manifest'); } catch {}
+  try { events = parseJsonLines(await readRunFile(args.runId, args.taskId, 'package/job_events.jsonl')); } catch {}
+  if (args.json) { printJson({ ok: true, command: 'job', runId: args.runId, taskId: args.taskId, job: jobPackage, manifest, events }); return; }
+  console.log(`Job: ${jobPackage.runId} / ${jobPackage.taskId}`);
+  console.log(`Role: ${jobPackage.role} attempt ${jobPackage.attempt || 1}`);
+  console.log(`Backend: ${jobPackage.execution?.backend || '-'} / ${jobPackage.execution?.agentRuntime || '-'}`);
+  console.log(`Sandbox: ${jobPackage.security?.sandbox || jobPackage.execution?.sandbox || '-'}`);
+  console.log(`Workspace: ${jobPackage.workspace?.path || '-'}`);
+  if (jobPackage.retry) console.log(`Retry: retryCount=${jobPackage.retry.retryCount} reason=${jobPackage.retry.lastReason || '-'}`);
+  if (manifest?.files) {
+    const existing = manifest.files.filter(item => item.exists).length;
+    console.log(`Artifacts: ${existing}/${manifest.files.length} standard files present`);
+  }
+  if (events.length) {
+    console.log('Events:');
+    for (const event of events.slice(-8)) console.log(`- ${event.at || '-'} ${event.type || '-'}${event.exitCode !== undefined ? ` exit=${event.exitCode}` : ''}`);
+  }
+}
+
 async function stop(args) {
   applyRuntimeEnv(args);
   if (!args.runId) throw new Error('stop requires a runId');
@@ -1163,6 +1234,11 @@ try {
     args.json = args.json || globals.json;
     if (args.help) { printRetryHelp(); process.exit(0); }
     await retry(args);
+  } else if (command === 'job') {
+    const args = parseJobArgs(rest);
+    args.json = args.json || globals.json;
+    if (args.help) { printJobHelp(); process.exit(0); }
+    await job(args);
   } else if (command === 'stop') {
     const args = parseStopArgs(rest);
     args.json = args.json || globals.json;

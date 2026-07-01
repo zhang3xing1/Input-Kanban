@@ -45,8 +45,18 @@ export function createStandaloneJobSpec({
   runner,
   agentRuntime = 'codex',
   skipGitRepoCheck = false,
-  expectedArtifacts = []
+  expectedArtifacts = [],
+  attempt = 1,
+  retry = null,
+  workspace = null,
+  security = null
 }) {
+  const workspaceRef = workspace && typeof workspace === 'object'
+    ? { type: 'localPath', path: cwd, ...workspace }
+    : { type: 'localPath', path: cwd };
+  const securityPolicy = security && typeof security === 'object'
+    ? { sandbox, network: 'inherit', secrets: [], allowedPaths: [], maxRuntimeMs: null, ...security }
+    : { sandbox, network: 'inherit', secrets: [], allowedPaths: [], maxRuntimeMs: null };
   return {
     schema: JOB_PACKAGE_SCHEMA,
     version: JOB_PACKAGE_VERSION,
@@ -55,6 +65,8 @@ export function createStandaloneJobSpec({
     taskId,
     batchId,
     role,
+    attempt: Number(attempt || 1),
+    retry,
     createdAt: nowIso(),
     package: {
       dir: 'package',
@@ -66,10 +78,7 @@ export function createStandaloneJobSpec({
       manifest: 'package/manifest.json',
       events: 'package/job_events.jsonl'
     },
-    workspace: {
-      type: 'localPath',
-      path: cwd
-    },
+    workspace: workspaceRef,
     execution: {
       backend: runner,
       agentRuntime,
@@ -87,6 +96,7 @@ export function createStandaloneJobSpec({
       file: 'package/prompt.md'
     },
     expectedArtifacts: Array.isArray(expectedArtifacts) ? expectedArtifacts : [],
+    security: securityPolicy,
     artifacts: standaloneArtifactContract()
   };
 }

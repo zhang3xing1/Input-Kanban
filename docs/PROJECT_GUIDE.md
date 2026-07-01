@@ -53,7 +53,7 @@ The npm CLI entry is:
 bin/input-kanban.js
 ```
 
-It parses CLI options and sets environment variables before importing backend modules. Without a subcommand, or with `serve`, it starts the HTTP server. With `submit`, it creates a run directly in the shared runs directory and can optionally run an auto loop. Additional subcommands expose agent-friendly status/result/retry/stop flows, a usage guide, bundled skill installation, and tmux dependency checks.
+It parses CLI options and sets environment variables before importing backend modules. Without a subcommand, or with `serve`, it starts the HTTP server. With `submit`, it creates a run directly in the shared runs directory and can optionally run an auto loop. Additional subcommands expose agent-friendly status/result/retry/stop flows, read-only job package inspection, a usage guide, bundled skill installation, and tmux dependency checks.
 
 Supported serve options:
 
@@ -117,6 +117,18 @@ Supported retry options:
 ```
 
 `input-kanban retry <runId> [taskId]` retries failed or unknown worker tasks. If `taskId` is omitted, it retries failed/unknown tasks in the current blocked batch. Before retrying, the worker output directory is moved under `worker_attempts/<taskId>/attempt-XX/` so failed logs, stderr, exit code, and last message remain available for audit. Retry resets the task to `pending`, records retry history, then reuses the existing scheduler.
+
+Supported job inspection options:
+
+```text
+input-kanban job <runId> planner
+input-kanban job <runId> <taskId>
+input-kanban job <runId> judge
+--runs-dir <path>
+--json
+```
+
+`input-kanban job` is read-only. It prints the standalone job package summary and, with `--json`, emits `package/job.json`, `package/manifest.json`, and `package/job_events.jsonl` for auditing without refreshing or advancing the run.
 
 Supported stop options:
 
@@ -251,7 +263,7 @@ judge/package/manifest.json
 judge/package/job_events.jsonl
 ```
 
-The package uses schema `input-kanban.job.v1` and records the common execution contract: `runId`, `taskId`, `role`, `batchId`, `workspace` reference, execution backend (`headless` or `tmux`), agent runtime (`codex` or `pi`), sandbox, prompt file, expected artifacts, and the standard artifact file contract. `manifest.json` records the current existence, size, and mtime of standard artifacts, and `job_events.jsonl` records normalized lifecycle events such as `job.packaged`, `job.started`, `job.completed`, `job.failed`, and `job.stop_requested`. The current artifact files remain in the existing role directory (`prompt.md`, `events.jsonl`, `stderr.log`, `last_message.md`, `exit_code`, etc.) for backward compatibility. Distributed runners should consume the same package contract instead of inventing a second task format.
+The package uses schema `input-kanban.job.v1` and records the common execution contract: `runId`, `taskId`, `role`, `batchId`, `attempt`, retry metadata, `workspace` reference with available git metadata, execution backend (`headless` or `tmux`), agent runtime (`codex` or `pi`), sandbox/security policy, prompt file, expected artifacts, and the standard artifact file contract. `manifest.json` records the current existence, size, and mtime of standard artifacts, and `job_events.jsonl` records normalized lifecycle events such as `job.packaged`, `job.started`, `job.completed`, `job.failed`, and `job.stop_requested`. The current artifact files remain in the existing role directory (`prompt.md`, `events.jsonl`, `stderr.log`, `last_message.md`, `exit_code`, etc.) for backward compatibility. Distributed runners should consume the same package contract instead of inventing a second task format.
 
 ## Run State Machine
 

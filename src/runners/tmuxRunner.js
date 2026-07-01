@@ -260,7 +260,7 @@ export function createTmuxRunner({
 } = {}) {
   const runningWindows = new Map();
 
-  async function startAgentTask({ runId, taskId, batchId = null, runStatePath = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false, expectedArtifacts = [] }) {
+  async function startAgentTask({ runId, taskId, batchId = null, runStatePath = null, prompt, sandbox, cwd, outDir, skipGitRepoCheck = false, expectedArtifacts = [], attempt = 1, retry = null, workspace = null, security = null }) {
     await ensureDir(outDir);
     const sessionName = sessionNameForRun(runId);
     const role = roleForTask(taskId);
@@ -274,7 +274,7 @@ export function createTmuxRunner({
     const metadataFile = path.join(outDir, 'tmux.json');
     const startedAt = nowIso();
 
-    writeStandaloneJobPackage({ runId, taskId, batchId, role, prompt, sandbox, cwd, outDir, runner: 'tmux', agentRuntime: 'codex', skipGitRepoCheck, expectedArtifacts });
+    writeStandaloneJobPackage({ runId, taskId, batchId, role, prompt, sandbox, cwd, outDir, runner: 'tmux', agentRuntime: 'codex', skipGitRepoCheck, expectedArtifacts, attempt, retry, workspace, security });
     await fsp.writeFile(promptFile, prompt);
     const { command: codexCommand, argsPrefix: codexArgsPrefix } = resolveCodexLauncher(codexBin);
     await fsp.writeFile(runScript, buildRunScript({ backend: shellBackend, codexCommand, codexArgsPrefix, sandbox, cwd, outDir, runId, taskId, role, skipGitRepoCheck }));

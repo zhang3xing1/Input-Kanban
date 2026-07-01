@@ -258,6 +258,36 @@ test('CLI emits JSON status output', async () => {
   assert.equal(parsed.run.total, 0);
 });
 
+test('CLI emits JSON job package output', async () => {
+  const runsDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'input-kanban-json-job-'));
+  const runId = 'run_json_job';
+  await writeRunState(runsDir, runId, {
+    runId,
+    label: 'json job',
+    repo: repoRoot,
+    workspacePath: repoRoot,
+    runner: 'headless',
+    status: 'running',
+    createdAt: '2026-06-10T00:00:00.000Z',
+    planner: { status: 'completed' },
+    tasks: [{ id: 'T-01', status: 'running' }],
+    batches: [],
+    judge: { status: 'pending' }
+  }, [
+    ['workers/T-01/package/job.json', JSON.stringify({ runId, taskId: 'T-01', role: 'worker', attempt: 2, execution: { backend: 'headless', agentRuntime: 'codex' }, security: { sandbox: 'workspace-write' }, workspace: { path: repoRoot } })],
+    ['workers/T-01/package/manifest.json', JSON.stringify({ files: [{ name: 'job', exists: true }] })],
+    ['workers/T-01/package/job_events.jsonl', JSON.stringify({ type: 'job.started', at: '2026-06-10T00:00:01.000Z' }) + '\n']
+  ]);
+
+  const output = runCli(['--json', 'job', runId, 'T-01', '--runs-dir', runsDir]);
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.command, 'job');
+  assert.equal(parsed.job.taskId, 'T-01');
+  assert.equal(parsed.job.attempt, 2);
+  assert.equal(parsed.manifest.files[0].name, 'job');
+  assert.equal(parsed.events[0].type, 'job.started');
+});
+
 test('CLI emits JSON result output', async () => {
   const runsDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'input-kanban-json-result-'));
   const runId = 'run_json_result';
@@ -535,7 +565,7 @@ test('CLI submit keeps runner local instead of exporting KANBAN_RUNNER to the pl
 });
 
 test('CLI exposes submit auto loop without replacing serve mode', () => {
-  assert.match(cli, /COMMANDS = new Set\(\['serve', 'submit', 'runs', 'status', 'result', 'retry', 'stop', 'auto', 'guide', 'install-skill', 'deps'\]\)/);
+  assert.match(cli, /COMMANDS = new Set\(\['serve', 'submit', 'runs', 'status', 'result', 'retry', 'stop', 'auto', 'job', 'guide', 'install-skill', 'deps'\]\)/);
   assert.match(cli, /input-kanban v\$\{PACKAGE_VERSION\}/);
   assert.match(cli, /input-kanban --version/);
   assert.match(cli, /input-kanban runs \[options\]/);
@@ -543,6 +573,7 @@ test('CLI exposes submit auto loop without replacing serve mode', () => {
   assert.match(cli, /async function runs\(args\)/);
   assert.match(cli, /--active\s+Show only active or pending-action runs/);
   assert.match(cli, /input-kanban retry <runId> \[taskId\]/);
+  assert.match(cli, /input-kanban job <runId> <taskId>/);
   assert.match(cli, /await retryRun\(args\.runId/);
   assert.match(cli, /input-kanban submit \[options\]/);
   assert.match(cli, /--codex-skip-git-repo-check\s+Pass --skip-git-repo-check to Codex exec/);
@@ -565,6 +596,7 @@ test('CLI exposes submit auto loop without replacing serve mode', () => {
   assert.match(cli, /function startDetachedAuto\(runId, args\)/);
   assert.match(cli, /async function result\(args\)/);
   assert.match(cli, /async function retry\(args\)/);
+  assert.match(cli, /async function job\(args\)/);
   assert.match(cli, /async function copyToClipboard\(text\)/);
   assert.match(cli, /await readRunFile\(runId, 'judge', 'verdict\.json'\)/);
   assert.match(cli, /async function stop\(args\)/);

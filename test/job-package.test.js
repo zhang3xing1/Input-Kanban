@@ -59,3 +59,26 @@ test('standalone job spec derives planner and judge roles', () => {
   assert.equal(createStandaloneJobSpec({ runId: 'r', taskId: 'planner', prompt: '', sandbox: 'read-only', cwd: '/', outDir: '/', runner: 'headless' }).role, 'planner');
   assert.equal(createStandaloneJobSpec({ runId: 'r', taskId: 'judge', prompt: '', sandbox: 'read-only', cwd: '/', outDir: '/', runner: 'headless' }).role, 'judge');
 });
+
+test('standalone job spec records attempt retry workspace and security metadata', () => {
+  const spec = createStandaloneJobSpec({
+    runId: 'r',
+    taskId: 'T-01',
+    prompt: 'p',
+    sandbox: 'workspace-write',
+    cwd: '/repo',
+    outDir: '/out',
+    runner: 'headless',
+    attempt: 3,
+    retry: { retryCount: 2, lastReason: 'flaky' },
+    workspace: { path: '/repo', name: 'repo', git: { isGit: true, branch: 'main' } },
+    security: { network: 'inherit', allowedPaths: ['/repo'], codexSkipGitRepoCheck: true }
+  });
+  assert.equal(spec.attempt, 3);
+  assert.deepEqual(spec.retry, { retryCount: 2, lastReason: 'flaky' });
+  assert.equal(spec.workspace.name, 'repo');
+  assert.equal(spec.workspace.git.branch, 'main');
+  assert.equal(spec.security.sandbox, 'workspace-write');
+  assert.deepEqual(spec.security.allowedPaths, ['/repo']);
+  assert.equal(spec.security.codexSkipGitRepoCheck, true);
+});
