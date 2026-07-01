@@ -89,6 +89,8 @@ globalThis.__renderWorkerBackendHint = renderWorkerBackendHint;
   globalThis.__sessionCell = sessionCell;
   globalThis.__taskActionInfoCell = taskActionInfoCell;
   globalThis.__loadFile = loadFile;
+  globalThis.__renderFileTabs = renderFileTabs;
+  globalThis.__fileTabsForSelectedTask = fileTabsForSelectedTask;
   globalThis.__setApi = nextApi => { api = nextApi; };
   globalThis.__calls = calls;`, context);
   context.__storage = storage;
@@ -658,6 +660,52 @@ test('file viewer caches task log files while switching details', async () => {
   const fileRequests = harness.__calls.filter(call => call.kind === 'api' && call.path.includes('/file?name='));
   assert.deepEqual(fileRequests.map(call => call.path.match(/name=([^&]+)/)?.[1]), ['events.pretty', 'events.jsonl', 'events_timed.jsonl']);
   assert.match(harness.document.getElementById('refreshPulse').title, /任务文件加载:/);
+});
+
+test('file viewer hides standalone package tabs for legacy tasks without package files', () => {
+  const harness = createFrontendHarness();
+  harness.__setRun('run_legacy', {
+    runId: 'run_legacy',
+    tasks: [{ id: 'T-01', name: 'Worker', status: 'completed', files: { events: { exists: true }, lastMessage: { exists: true } } }],
+    batches: []
+  });
+  harness.__setSelectedTask('T-01');
+
+  harness.__renderFileTabs();
+
+  const tabsHtml = harness.document.getElementById('fileTabs').innerHTML;
+  assert.match(tabsHtml, /执行过程/);
+  assert.match(tabsHtml, /最终回复/);
+  assert.doesNotMatch(tabsHtml, /任务包/);
+  assert.doesNotMatch(tabsHtml, /产物清单/);
+  assert.doesNotMatch(tabsHtml, /Job事件/);
+});
+
+test('file viewer shows standalone package tabs when package files exist', () => {
+  const harness = createFrontendHarness();
+  harness.__setRun('run_standalone', {
+    runId: 'run_standalone',
+    tasks: [{
+      id: 'T-01',
+      name: 'Worker',
+      status: 'completed',
+      files: {
+        events: { exists: true },
+        jobPackage: { exists: true },
+        jobManifest: { exists: true },
+        jobEvents: { exists: true }
+      }
+    }],
+    batches: []
+  });
+  harness.__setSelectedTask('T-01');
+
+  harness.__renderFileTabs();
+
+  const tabsHtml = harness.document.getElementById('fileTabs').innerHTML;
+  assert.match(tabsHtml, /任务包/);
+  assert.match(tabsHtml, /产物清单/);
+  assert.match(tabsHtml, /Job事件/);
 });
 
 test('file viewer renders role-specific file tabs', () => {

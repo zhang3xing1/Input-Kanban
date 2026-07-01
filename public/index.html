@@ -1546,8 +1546,15 @@ function roleForSelectedTask() {
   if (selectedTask === 'judge') return 'judge';
   return selectedTask ? 'worker' : 'worker';
 }
+function fileTabAvailableForSelectedTask(name) {
+  if (!String(name || '').startsWith('package/')) return true;
+  const infoKey = FILE_INFO_KEY_BY_NAME[name];
+  if (!infoKey) return false;
+  return !!taskById(selectedTask)?.files?.[infoKey]?.exists;
+}
 function fileTabsForSelectedTask() {
-  return FILE_TAB_SETS[roleForSelectedTask()] || FILE_TAB_SETS.worker;
+  const tabs = FILE_TAB_SETS[roleForSelectedTask()] || FILE_TAB_SETS.worker;
+  return tabs.filter(([name]) => fileTabAvailableForSelectedTask(name));
 }
 function renderFileTabs() {
   const el = document.getElementById('fileTabs');
