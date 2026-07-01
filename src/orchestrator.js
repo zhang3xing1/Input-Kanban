@@ -841,10 +841,39 @@ function upstreamArtifactInstructions(state, task) {
   return `\n\nAvailable upstream artifacts from completed earlier batches:\n${lines.join('\n')}\nUse only artifacts from this run id: ${state.runId}.`;
 }
 
+async function liveStandaloneJobStart(outDir) {
+  const exit = await readTextMaybe(path.join(outDir, 'exit_code'), 1000);
+  if (exit !== '') return null;
+  const text = await readTextMaybe(path.join(outDir, 'package', 'job_events.jsonl'), 200000);
+  if (!String(text || '').trim()) return null;
+  let lastStarted = null;
+  let closedAfterStart = false;
+  for (const line of String(text).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (event?.type === 'job.started') {
+      lastStarted = event;
+      closedAfterStart = false;
+    } else if (lastStarted && ['job.completed', 'job.failed', 'job.start_failed'].includes(event?.type)) {
+      closedAfterStart = true;
+    }
+  }
+  const pid = Number(lastStarted?.pid);
+  if (!closedAfterStart && Number.isFinite(pid) && pid > 0 && isPidAlive(pid)) return { ...lastStarted, pid };
+  return null;
+}
+
 async function startWorkerInState(state, task) {
   const runDir = pathForRun(state.runId);
   const outDir = roleDir(runDir, 'worker', task.id);
   await ensureDir(outDir);
+  if (task.status === 'running' && await hasLiveRunnerProcess(state, task.id, task)) return;
+  const durableStart = await liveStandaloneJobStart(outDir);
+  if (durableStart) {
+    Object.assign(task, { status: 'running', pid: durableStart.pid, startedAt: durableStart.at || task.startedAt || nowIso(), dir: outDir });
+    return;
+  }
   const fullPrompt = `${marker(state.runId, task.id, 'worker')}
 ORCHESTRATOR_BATCH_ID: ${task.batchId || 'batch-1'}
 

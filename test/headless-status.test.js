@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -158,4 +159,49 @@ test('autoAdvanceRun dispatches planned runs through the shared orchestrator pat
   assert.ok(state.tasks[0].startedAt);
   assert.ok(state.tasks[0].pid > 0);
   await stopRun(runId, { reason: 'test cleanup' });
+});
+
+test('dispatchRun reuses a durable live standalone worker start instead of launching twice', async () => {
+  const runId = 'run_durable_live_worker_start';
+  const runDir = path.join(tmp, runId);
+  const workerDir = path.join(runDir, 'workers', 'T-01');
+  await fsp.mkdir(path.join(runDir, 'planner'), { recursive: true });
+  await fsp.mkdir(path.join(runDir, 'judge'), { recursive: true });
+  await fsp.mkdir(path.join(workerDir, 'package'), { recursive: true });
+  await fsp.writeFile(path.join(runDir, 'task.md'), 'task');
+  const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+  const startedAt = '2026-06-08T00:00:01.000Z';
+  await fsp.writeFile(path.join(workerDir, 'package', 'job_events.jsonl'), `${JSON.stringify({ schema: 'input-kanban.job-event.v1', at: startedAt, type: 'job.started', runId, taskId: 'T-01', role: 'worker', backend: 'headless', agentRuntime: 'codex', pid: live.pid })}\n`);
+  await fsp.writeFile(path.join(runDir, 'run_state.json'), JSON.stringify({
+    runId,
+    label: 'durable live worker start',
+    repo: tmp,
+    runner: 'headless',
+    maxParallel: 1,
+    workerSandbox: 'workspace-write',
+    status: 'planned',
+    createdAt: '2026-06-08T00:00:00.000Z',
+    updatedAt: '2026-06-08T00:00:00.000Z',
+    planner: { status: 'completed' },
+    judge: { status: 'pending' },
+    batches: [{
+      id: 'batch-1',
+      status: 'pending',
+      maxParallel: 1,
+      tasks: [{ id: 'T-01', name: 'Worker', batchId: 'batch-1', prompt: 'work', sandbox: 'workspace-write', expectedArtifacts: [], status: 'pending' }]
+    }],
+    tasks: [{ id: 'T-01', name: 'Worker', batchId: 'batch-1', prompt: 'work', sandbox: 'workspace-write', expectedArtifacts: [], status: 'pending' }]
+  }, null, 2));
+
+  try {
+    const state = await dispatchRun(runId);
+    assert.equal(state.status, 'running');
+    assert.equal(state.tasks[0].status, 'running');
+    assert.equal(state.tasks[0].pid, live.pid);
+    assert.equal(state.tasks[0].startedAt, startedAt);
+    const events = (await fsp.readFile(path.join(workerDir, 'package', 'job_events.jsonl'), 'utf8')).trim().split(/\n/).map(line => JSON.parse(line));
+    assert.deepEqual(events.map(event => event.type), ['job.started']);
+  } finally {
+    live.kill('SIGKILL');
+  }
 });
