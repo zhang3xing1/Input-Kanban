@@ -4,6 +4,24 @@
 
 - No unreleased changes yet.
 
+## v0.0.32
+
+### Highlights
+
+- Add standalone job packages for planner, worker, and judge roles under each role's `package/` directory without moving existing run artifacts.
+- Record `input-kanban.job.v1` job metadata, including role, attempt, retry context, workspace, execution backend, agent runtime, sandbox/security intent, prompt, and expected artifacts.
+- Add artifact manifests and lifecycle events via `input-kanban.artifact-manifest.v1` and `input-kanban.job-event.v1`, covering `job.packaged`, `job.started`, `job.completed`, `job.failed`, `job.start_failed`, and `job.stop_requested`.
+- Add read-only `input-kanban job <runId> <taskId|planner|judge>` and `--json` output for inspecting job packages, manifests, and events.
+- Expose package files in the Web task detail view while hiding missing package tabs for legacy runs.
+- Guard standalone worker starts with durable job events so concurrent CLI/Web scheduler advancement does not launch the same worker twice.
+- Document standalone job packages in the Chinese and English READMEs; distributed workers, remote execution, and replay remain future work.
+
+### Verification
+
+- `npm run check` passed locally with 155 tests.
+- A live headless smoke run after restarting the Web server completed with non-duplicated worker events: `job.packaged -> job.started -> job.completed`.
+- Windows-native validation passed on `zhangxing_win` with Node `v24.14.1`, npm `11.11.0`, `npm install`, and `npm run check` in a temporary Windows validation directory with 155 tests.
+
 ## v0.0.31
 
 ### Highlights

@@ -99,6 +99,7 @@ input-kanban status <runId> --watch   # polls snapshots by default
 input-kanban status <runId> --refresh # explicitly sync runner state
 input-kanban result <runId>
 input-kanban result <runId> --copy
+input-kanban job <runId> <taskId|planner|judge> # inspect the standalone job package, manifest, and events
 input-kanban retry <runId> [taskId]
 input-kanban stop <runId>
 ```
@@ -171,6 +172,7 @@ input-kanban deps tmux
 input-kanban --json runs --active
 input-kanban --json status <runId>
 input-kanban --json result <runId>
+input-kanban --json job <runId> <taskId|planner|judge>
 input-kanban --json retry <runId> [taskId]
 input-kanban --json stop <runId>
 ```
@@ -236,6 +238,34 @@ runs/<runId>/
 ```
 
 These files are local run records and do not need to be committed to your application workspace.
+
+## Standalone Job Package
+
+Starting in v0.0.32, Input Kanban writes a standard job package for local standalone execution. It does not move or rename the existing `prompt.md`, `events.jsonl`, `last_message.md`, `result.json`, or `verdict.json` files; the package is additive under each role directory:
+
+```text
+planner/package/job.json
+workers/<taskId>/package/job.json
+judge/package/job.json
+```
+
+The same `package/` directory also includes:
+
+- `prompt.md`: the exact prompt copy sent to the agent
+- `workspace.json`: local workspace and Git metadata
+- `execution.json`: runner, agent runtime, sandbox, and execution metadata
+- `artifacts.json`: the standard artifact contract
+- `manifest.json`: artifact existence, size, and modification time
+- `job_events.jsonl`: lifecycle events such as `job.packaged`, `job.started`, `job.completed`, and `job.failed`
+
+The Web task detail view shows `Job Package`, `Artifact Manifest`, and `Job Events` tabs when those files exist. Legacy runs without package files hide those tabs. The CLI can inspect the package read-only:
+
+```bash
+input-kanban job <runId> T-01
+input-kanban --json job <runId> T-01
+```
+
+This standalone contract is an auditable local execution record. Distributed workers, remote execution, and replay remain future capabilities and are not part of v0.0.32.
 
 ## What You Usually Do with It
 

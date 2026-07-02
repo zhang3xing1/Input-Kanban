@@ -97,6 +97,7 @@ input-kanban status <runId> --watch  # 默认轮询快照
 input-kanban status <runId> --refresh # 显式同步 runner 状态
 input-kanban result <runId>
 input-kanban result <runId> --copy
+input-kanban job <runId> <taskId|planner|judge> # 查看 standalone 任务包、产物清单和 Job 事件
 input-kanban retry <runId> [taskId]
 input-kanban stop <runId>
 ```
@@ -182,6 +183,7 @@ input-kanban deps tmux
 input-kanban --json runs --active
 input-kanban --json status <runId>
 input-kanban --json result <runId>
+input-kanban --json job <runId> <taskId|planner|judge>
 input-kanban --json retry <runId> [taskId]
 input-kanban --json stop <runId>
 ```
@@ -249,6 +251,34 @@ runs/<runId>/
 ```
 
 这些都是本地运行记录，不需要提交到你的业务仓库。
+
+## Standalone 任务包
+
+从 v0.0.32 开始，Input Kanban 会为本地 standalone 执行写入标准任务包。它不会改变旧的 `prompt.md`、`events.jsonl`、`last_message.md`、`result.json`、`verdict.json` 等路径；新文件只是额外放在每个角色目录的 `package/` 下：
+
+```text
+planner/package/job.json
+workers/<taskId>/package/job.json
+judge/package/job.json
+```
+
+同一目录还会包含：
+
+- `prompt.md`：这次实际交给 agent 的 prompt 副本
+- `workspace.json`：本地工作区和 Git 元数据
+- `execution.json`：runner、agent runtime、sandbox 等执行信息
+- `artifacts.json`：标准产物契约
+- `manifest.json`：产物是否存在、大小和修改时间
+- `job_events.jsonl`：`job.packaged`、`job.started`、`job.completed`、`job.failed` 等生命周期事件
+
+你可以在 Web 任务详情里查看 `任务包`、`产物清单` 和 `Job事件`；旧 run 没有这些文件时不会显示对应 tab。CLI 也可以只读查看：
+
+```bash
+input-kanban job <runId> T-01
+input-kanban --json job <runId> T-01
+```
+
+这套 standalone contract 是本地执行的可审计记录；distributed worker、远程执行和 replay 仍是后续能力，不属于 v0.0.32。
 
 ## 你通常会怎么用它
 
